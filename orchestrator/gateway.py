@@ -14,10 +14,119 @@ from subnet import NETUID
 from subnet.graph_store import GraphStore
 from subnet.protocol import NodeID, SessionID
 
+from subnet.graph_store import Edge, GraphStore, Node
+
 from orchestrator.embedder import Embedder
 from orchestrator.router import Router
 from orchestrator.safety_guard import PathSafetyGuard
 from orchestrator.session import OrchestratorSession, SessionState
+
+
+# ---------------------------------------------------------------------------
+# Graph browsing helpers
+# ---------------------------------------------------------------------------
+
+
+def _node_to_dict(node: Node) -> dict:
+    return {
+        "uuid": node.node_id,
+        "name": node.node_id.replace("-", " ").title(),
+        "node_type": "domain",
+        "labels": [node.metadata.get("persona", "neutral")],
+        "summary": node.metadata.get("description", ""),
+        "created_at": node.created_at,
+    }
+
+
+def _edge_to_dict(edge: Edge) -> dict:
+    return {
+        "uuid": f"{edge.source_id}:{edge.dest_id}",
+        "edge_type": "connects",
+        "source_node_uuid": edge.source_id,
+        "target_node_uuid": edge.dest_id,
+        "fact": None,
+        "weight": edge.weight,
+    }
+
+
+def _episodes_from_sessions(sessions: list[dict]) -> list[dict]:
+    return [
+        {
+            "uuid": r["session_id"],
+            "name": f"{r['source_id']} → {r['dest_id']}",
+            "content": {"content": f"Traversal from {r['source_id']} to {r['dest_id']}"},
+            "created_at": r["timestamp"],
+        }
+        for r in sessions
+    ]
+
+
+class _SearchRequest(BaseModel):
+    query: str
+    num_results: int = 20
+
+
+def _register_graph_endpoints(app: FastAPI, graph_store: GraphStore) -> None:
+    """Register read-only graph browsing endpoints on *app*."""
+
+    @app.get("/graph/nodes")
+    async def graph_nodes_all() -> dict:
+        nodes = [n for n in graph_store.get_all_nodes() if n.state == "Live"]
+        edges = graph_store.get_all_edges()
+        return {
+            "success": True,
+            "entities": [_node_to_dict(n) for n in nodes],
+            "edges": [_edge_to_dict(e) for e in edges],
+            "episodes": _episodes_from_sessions(graph_store.sample_recent_sessions(10)),
+            "num_results": len(nodes),
+        }
+
+    @app.post("/graph/search")
+    async def graph_search(req: _SearchRequest) -> dict:
+        q = req.query.lower()
+        all_live = [n for n in graph_store.get_all_nodes() if n.state == "Live"]
+        words = q.split()
+        matched = [
+            n for n in all_live
+            if q in n.node_id.lower()
+            or any(w in n.metadata.get("description", "").lower() for w in words)
+        ] or all_live
+        matched = matched[: req.num_results]
+        matched_ids = {n.node_id for n in matched}
+        edges = [
+            _edge_to_dict(e)
+            for e in graph_store.get_all_edges()
+            if e.source_id in matched_ids or e.dest_id in matched_ids
+        ]
+        return {
+            "success": True,
+            "entities": [_node_to_dict(n) for n in matched],
+            "edges": edges,
+            "episodes": _episodes_from_sessions(graph_store.sample_recent_sessions(5)),
+            "num_results": len(matched),
+        }
+
+    @app.get("/graph/node/{node_id}/expand")
+    async def graph_expand_node(node_id: str) -> dict:
+        node = graph_store.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+        neighbour_ids = set(graph_store.neighbours(node_id))
+        neighbour_nodes = [
+            graph_store.get_node(nid) for nid in neighbour_ids if graph_store.get_node(nid)
+        ]
+        edges = [
+            _edge_to_dict(e)
+            for e in graph_store.get_all_edges()
+            if (e.source_id == node_id and e.dest_id in neighbour_ids)
+            or (e.dest_id == node_id)
+        ]
+        return {
+            "success": True,
+            "nodes": [_node_to_dict(n) for n in neighbour_nodes if n is not None],
+            "edges": edges,
+            "num_results": len(neighbour_nodes),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -38,13 +147,6 @@ class EnterResponse(BaseModel):
     knowledge_synthesis: str | None
     player_path: list[NodeID]
     state: str
-    scores: dict[str, float] | None = None
-    emission_snapshot: dict[str, float] | None = None
-    graph_delta: dict | None = None
-    responding_nodes: list[dict] | None = None
-    unbrowse_used: bool | None = None
-    unbrowse_context: str | None = None
-    nla_agreement: dict | None = None
 
 
 class HopRequest(BaseModel):
@@ -61,13 +163,6 @@ class HopResponse(BaseModel):
     player_path: list[NodeID]
     state: str
     error: str | None = None
-    scores: dict[str, float] | None = None
-    emission_snapshot: dict[str, float] | None = None
-    graph_delta: dict | None = None
-    responding_nodes: list[dict] | None = None
-    unbrowse_used: bool | None = None
-    unbrowse_context: str | None = None
-    nla_agreement: dict | None = None
 
 
 class SessionResponse(BaseModel):
@@ -105,6 +200,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    _register_graph_endpoints(app, graph_store)
 
     # In-memory session registry: session_id -> OrchestratorSession
     _sessions: dict[SessionID, OrchestratorSession] = {}
@@ -306,199 +403,17 @@ def create_app(
 
 
 # ---------------------------------------------------------------------------
-# Standalone / dev app instance — full local gateway with in-process miners
+# Standalone / dev app instance
 # ---------------------------------------------------------------------------
 
-
-class _LocalMinerPool:
-    """In-process miner pool: loads corpus per node, does chunk retrieval via numpy."""
-
-    def __init__(self, corpus_map: dict[str, list], embedder: Embedder) -> None:
-        from domain.corpus import CorpusLoader, Chunk
-
-        self._chunks: dict[str, list[Chunk]] = {}
-        self._centroids: dict[str, list[float]] = {}
-        self._embedder = embedder
-
-        for node_id, file_paths in corpus_map.items():
-            if not file_paths:
-                continue
-            # Use the first file's parent as corpus_dir
-            corpus_dir = file_paths[0].parent
-            if not corpus_dir.exists():
-                continue
-            cache_path = corpus_dir.parent / ".cache" / f"{node_id}.pkl"
-            loader = CorpusLoader(
-                corpus_dir=str(corpus_dir),
-                cache_path=str(cache_path),
-            )
-            chunks = loader.load()
-            if chunks:
-                self._chunks[node_id] = chunks
-                self._centroids[node_id] = loader.centroid
-
-    def retrieve_chunks(
-        self, node_id: str, query_embedding: list[float], top_k: int = 5
-    ) -> list[dict]:
-        """Retrieve top-k chunks from a specific node's corpus."""
-        import numpy as np
-
-        chunks = self._chunks.get(node_id, [])
-        if not chunks:
-            return []
-
-        query_emb = np.array(query_embedding, dtype=np.float32)
-        chunk_embs = np.array([c.embedding for c in chunks], dtype=np.float32)
-        scores = chunk_embs @ query_emb
-        k = min(top_k, len(chunks))
-        top_indices = np.argpartition(scores, -k)[-k:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-
-        return [
-            {
-                "id": chunks[i].id,
-                "text": chunks[i].text,
-                "hash": chunks[i].hash,
-                "score": float(scores[i]),
-            }
-            for i in top_indices
-        ]
-
-    def rank_entry_nodes(
-        self, query_embedding: list[float], top_k: int = 3
-    ) -> list[tuple[str, float]]:
-        """Rank all nodes by centroid similarity to query. Returns [(node_id, similarity)]."""
-        import numpy as np
-
-        query_emb = np.array(query_embedding, dtype=np.float32)
-        scored: list[tuple[str, float]] = []
-        for node_id, centroid in self._centroids.items():
-            centroid_vec = np.array(centroid, dtype=np.float32)
-            sim = float(centroid_vec @ query_emb)
-            scored.append((node_id, sim))
-        scored.sort(key=lambda t: t[1], reverse=True)
-        return scored[:top_k]
-
-    @property
-    def loaded_nodes(self) -> list[str]:
-        return list(self._chunks.keys())
-
-
-class _LocalNarrativeGenerator:
-    """Calls OpenRouter directly for narrative hop generation."""
-
-    def __init__(self) -> None:
-        from subnet.config import (
-            NARRATIVE_MAX_TOKENS,
-            NARRATIVE_MODEL,
-            NARRATIVE_TEMPERATURE,
-            OPENROUTER_BASE_URL,
-        )
-        import os
-
-        self._model = NARRATIVE_MODEL
-        self._max_tokens = NARRATIVE_MAX_TOKENS
-        self._temperature = NARRATIVE_TEMPERATURE
-        self._base_url = OPENROUTER_BASE_URL
-        self._api_key = os.environ.get("OPENROUTER_API_KEY", "")
-        self._client = None
-
-    def _get_client(self):
-        if self._client is None:
-            from openai import AsyncOpenAI
-
-            self._client = AsyncOpenAI(
-                api_key=self._api_key or "sk-placeholder",
-                base_url=self._base_url,
-            )
-        return self._client
-
-    async def generate_hop(
-        self,
-        destination_node_id: str,
-        player_path: list[str],
-        prior_narrative: str,
-        retrieved_chunks: list[dict],
-        adjacent_nodes: list[str],
-        persona: str = "explorer",
-    ) -> dict[str, Any]:
-        """Generate a narrative hop passage via OpenRouter. Returns parsed result dict."""
-        import json
-        from domain.narrative.prompt import build_prompt
-
-        system_prompt, user_prompt = build_prompt(
-            destination_node_id=destination_node_id,
-            player_path=player_path,
-            prior_narrative=prior_narrative,
-            retrieved_chunks=retrieved_chunks,
-            persona=persona,
-            num_choices=min(3, max(1, len(adjacent_nodes))),
-        )
-
-        # Inject adjacent node IDs so the LLM can generate valid choice cards
-        user_prompt += (
-            f"\n\nAvailable destination nodes for choice cards: {adjacent_nodes}\n"
-            "You MUST use only these node IDs in your choice_cards destination_node_id fields."
-        )
-
-        client = self._get_client()
-        try:
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-                response_format={"type": "json_object"},
-            )
-            raw = response.choices[0].message.content or ""
-            return json.loads(raw)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error("Narrative generation failed: %s", exc)
-            return {
-                "narrative_passage": f"(generation failed: {exc})",
-                "choice_cards": [
-                    {"text": f"Continue to {n}", "destination_node_id": n,
-                     "edge_weight_delta": 0.0, "thematic_color": "#888888"}
-                    for n in adjacent_nodes[:3]
-                ],
-                "knowledge_synthesis": "",
-            }
-
-
 def create_dev_app() -> FastAPI:
-    """Create a standalone gateway for local dev — full traversal, no Bittensor."""
-    import logging
-
-    log = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-
-    log.info("Loading seed topology...")
+    """Create a standalone gateway for local dev (no Bittensor connection)."""
     from seed.loader import load_topology
 
-    graph_store, corpus_map = load_topology()
-
-    log.info("Loading embedder + corpus (this may take a moment on first run)...")
+    graph_store = GraphStore(db_path=None)  # in-memory only
+    load_topology(graph_store=graph_store)
     embedder = Embedder()
-    miner_pool = _LocalMinerPool(corpus_map, embedder)
-    narrator = _LocalNarrativeGenerator()
     safety_guard = PathSafetyGuard()
-
-    from evolution.nla_settlement import NLASettlementClient
-    from orchestrator.mock_scoring import mock_scores
-    from orchestrator.unbrowse import UnbrowseClient
-
-    unbrowse_client = UnbrowseClient()
-    nla_client = NLASettlementClient()
-
-    log.info(
-        "Dev gateway ready: %d graph nodes, %d with loaded corpus",
-        graph_store.stats()["node_count"],
-        len(miner_pool.loaded_nodes),
-    )
 
     app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
 
@@ -510,349 +425,106 @@ def create_dev_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    _sessions: dict[SessionID, dict[str, Any]] = {}
+    _register_graph_endpoints(app, graph_store)
+
+    # ------------------------------------------------------------------
+    # Dev stubs for /enter and /hop (no Bittensor miners needed)
+    # ------------------------------------------------------------------
+
+    import uuid as _uuid
+
+    _dev_sessions: dict[str, dict] = {}
+
+    def _dev_choice_cards(node_id: str) -> list[dict]:
+        colours = ["#6ee7b7", "#93c5fd", "#fbbf24", "#f472b6", "#a78bfa"]
+        neighbours = graph_store.neighbours(node_id)
+        cards = []
+        for i, dest in enumerate(neighbours[:4]):
+            dest_node = graph_store.get_node(dest)
+            desc = (dest_node.metadata.get("description", dest) if dest_node else dest)[:80]
+            cards.append({
+                "text": desc,
+                "destination_node_id": dest,
+                "edge_weight_delta": 0.0,
+                "thematic_color": colours[i % len(colours)],
+            })
+        return cards
+
+    def _dev_narrative(node_id: str, query: str = "") -> str:
+        node = graph_store.get_node(node_id)
+        desc = node.metadata.get("description", node_id) if node else node_id
+        name = node_id.replace("-", " ").title()
+        context = f' Your query "{query}" led here.' if query else ""
+        return (
+            f"You arrive at {name}.{context} "
+            f"{desc} "
+            f"The edges of this domain shimmer with connections to neighbouring realms of knowledge."
+        )
+
+    @app.post("/enter", response_model=None)
+    async def dev_enter(req: EnterRequest) -> dict:
+        live_ids = graph_store.get_live_node_ids()
+        if not live_ids:
+            raise HTTPException(status_code=503, detail="Graph is empty")
+        q = req.query_text.lower()
+        entry = next(
+            (nid for nid in live_ids if q in nid or q in (
+                (graph_store.get_node(nid) or type("", (), {"metadata": {}})()).metadata.get("description", "").lower()  # type: ignore[union-attr]
+            )),
+            live_ids[0],
+        )
+        session_id = str(_uuid.uuid4())
+        cards = _dev_choice_cards(entry)
+        _dev_sessions[session_id] = {
+            "session_id": session_id,
+            "current_node_id": entry,
+            "player_path": [entry],
+            "state": "active",
+        }
+        return {
+            "session_id": session_id,
+            "current_node_id": entry,
+            "narrative_passage": _dev_narrative(entry, req.query_text),
+            "choice_cards": cards,
+            "knowledge_synthesis": None,
+            "player_path": [entry],
+            "state": "active",
+        }
+
+    @app.post("/hop", response_model=None)
+    async def dev_hop(req: HopRequest) -> dict:
+        session = _dev_sessions.get(req.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        dest = req.destination_node_id
+        session["player_path"].append(dest)
+        session["current_node_id"] = dest
+        cards = _dev_choice_cards(dest)
+        return {
+            "session_id": req.session_id,
+            "current_node_id": dest,
+            "narrative_passage": _dev_narrative(dest),
+            "choice_cards": cards,
+            "knowledge_synthesis": None,
+            "player_path": list(session["player_path"]),
+            "state": "active",
+            "error": None,
+        }
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
             "status": "ok",
-            "mode": "dev",
+            "mode": "standalone",
             "netuid": NETUID,
             "graph_stats": graph_store.stats(),
-            "loaded_corpus_nodes": miner_pool.loaded_nodes,
         }
 
     @app.get("/graph/stats")
     async def graph_stats() -> dict:
         return graph_store.stats()
 
-    @app.get("/graph/nodes")
-    async def graph_nodes() -> list[dict]:
-        node_ids = graph_store.get_live_node_ids()
-        return [
-            {
-                "node_id": nid,
-                "has_corpus": nid in miner_pool.loaded_nodes,
-                "neighbours": graph_store.neighbours(nid),
-            }
-            for nid in node_ids
-        ]
-
-    @app.post("/enter", response_model=EnterResponse)
-    async def enter(req: EnterRequest) -> dict[str, Any]:
-        # Embed the query
-        query_embedding = embedder.embed_one(req.query_text)
-
-        # Rank entry nodes by centroid similarity
-        ranked = miner_pool.rank_entry_nodes(query_embedding, top_k=req.top_k_entry)
-        if not ranked:
-            raise HTTPException(status_code=503, detail="No nodes with loaded corpus")
-
-        entry_node_id, similarity = ranked[0]
-
-        # Retrieve chunks from entry node
-        chunks = miner_pool.retrieve_chunks(entry_node_id, query_embedding, top_k=5)
-
-        # Get adjacent nodes for choice cards
-        adjacent = safety_guard.filter_candidates(
-            graph_store.neighbours(entry_node_id), [entry_node_id]
-        )
-
-        # Generate opening narrative
-        result = await narrator.generate_hop(
-            destination_node_id=entry_node_id,
-            player_path=[],
-            prior_narrative="",
-            retrieved_chunks=chunks,
-            adjacent_nodes=adjacent,
-        )
-
-        # Build choice cards from LLM response, filtering to valid adjacent nodes
-        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
-
-        import uuid
-
-        session_id = str(uuid.uuid4())
-        _sessions[session_id] = {
-            "session_id": session_id,
-            "state": "active",
-            "current_node_id": entry_node_id,
-            "player_path": [entry_node_id],
-            "prior_narrative": result.get("narrative_passage", ""),
-            "query_embedding": query_embedding,
-        }
-
-        # Mock scoring enrichment
-        chunk_scores = [c["score"] for c in chunks]
-        passage_text = result.get("narrative_passage", "")
-        scores = mock_scores(chunk_scores, passage_text, entry_node_id, graph_store)
-        emission_snapshot = {"traversal": 0.45, "quality": 0.30, "topology": 0.15, "reserve": 0.10}
-
-        # Graph delta: current edge weights for entry node (no reinforcement on /enter)
-        current_edges = {}
-        for nb in graph_store.neighbours(entry_node_id):
-            edge = graph_store._mem._adj.get(entry_node_id, {}).get(nb)
-            if edge:
-                current_edges[f"{entry_node_id}->{nb}"] = edge.weight
-        graph_delta = {k: {"before": v, "after": v} for k, v in current_edges.items()}
-
-        responding_nodes = [
-            {"node_id": nid, "similarity": sim} for nid, sim in ranked
-        ]
-
-        # Unbrowse external context (non-blocking — no API key = skip)
-        unbrowse_context: str | None = None
-        unbrowse_used = False
-        if unbrowse_client.api_key:
-            try:
-                ub_results = await unbrowse_client.fetch_context(req.query_text, entry_node_id)
-                if ub_results:
-                    unbrowse_context = unbrowse_client.format_for_prompt(ub_results)
-                    unbrowse_used = True
-            except Exception:
-                pass
-
-        # NLA agreement (demo — draft status, no on-chain interaction)
-        nla_agreement_obj = nla_client.build_proposal_agreement(
-            proposal_id=session_id,
-            proposer_hotkey="demo-hotkey",
-            node_id=entry_node_id,
-            proposal_type="TRAVERSE",
-            bond_tao=0.0,
-            voting_deadline_block=0,
-        )
-
-        return {
-            "session_id": session_id,
-            "current_node_id": entry_node_id,
-            "narrative_passage": result.get("narrative_passage"),
-            "choice_cards": choice_cards,
-            "knowledge_synthesis": result.get("knowledge_synthesis"),
-            "player_path": [entry_node_id],
-            "state": "active",
-            "scores": scores,
-            "emission_snapshot": emission_snapshot,
-            "graph_delta": graph_delta,
-            "responding_nodes": responding_nodes,
-            "unbrowse_used": unbrowse_used,
-            "unbrowse_context": unbrowse_context,
-            "nla_agreement": {
-                "agreement_text": nla_agreement_obj.agreement_text,
-                "status": nla_agreement_obj.status,
-            },
-        }
-
-    @app.post("/hop", response_model=HopResponse)
-    async def hop(req: HopRequest) -> dict[str, Any]:
-        session = _sessions.get(req.session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session["state"] != "active":
-            raise HTTPException(status_code=400, detail=f"Session is {session['state']}")
-
-        player_path = session["player_path"]
-
-        # Safety checks
-        ok, reason = safety_guard.check_path_length(player_path)
-        if not ok:
-            session["state"] = "terminal"
-            raise HTTPException(status_code=400, detail=reason)
-
-        safe = safety_guard.filter_candidates([req.destination_node_id], player_path)
-        if not safe:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Node {req.destination_node_id} already visited or blocked",
-            )
-
-        # Retrieve chunks from destination node
-        query_embedding = session["query_embedding"]
-        chunks = miner_pool.retrieve_chunks(req.destination_node_id, query_embedding, top_k=5)
-
-        # Get adjacent nodes (excluding already visited)
-        new_path = player_path + [req.destination_node_id]
-        adjacent = safety_guard.filter_candidates(
-            graph_store.neighbours(req.destination_node_id), new_path
-        )
-
-        # Check for terminal state (no adjacent nodes left)
-        if not adjacent:
-            session["state"] = "terminal"
-
-        # Generate narrative hop
-        result = await narrator.generate_hop(
-            destination_node_id=req.destination_node_id,
-            player_path=player_path,
-            prior_narrative=session["prior_narrative"],
-            retrieved_chunks=chunks,
-            adjacent_nodes=adjacent if adjacent else ["(terminal)"],
-        )
-
-        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
-
-        # Mock scoring enrichment
-        chunk_scores = [c["score"] for c in chunks]
-        passage = result.get("narrative_passage", "")
-        scores = mock_scores(chunk_scores, passage, req.destination_node_id, graph_store)
-        emission_snapshot = {"traversal": 0.45, "quality": 0.30, "topology": 0.15, "reserve": 0.10}
-
-        # Graph delta: capture edge weights before reinforcement, reinforce, then after
-        source_id = player_path[-1] if player_path else req.destination_node_id
-        dest_id = req.destination_node_id
-        before_edges: dict[str, float] = {}
-        for nb in graph_store.neighbours(source_id):
-            edge = graph_store._mem._adj.get(source_id, {}).get(nb)
-            if edge:
-                before_edges[f"{source_id}->{nb}"] = edge.weight
-        combined_score = sum(scores.values()) / len(scores)
-        graph_store.reinforce_edge(source_id, dest_id, combined_score)
-        after_edges: dict[str, float] = {}
-        for nb in graph_store.neighbours(source_id):
-            edge = graph_store._mem._adj.get(source_id, {}).get(nb)
-            if edge:
-                after_edges[f"{source_id}->{nb}"] = edge.weight
-        all_edge_keys = set(list(before_edges.keys()) + list(after_edges.keys()))
-        graph_delta = {
-            k: {"before": before_edges.get(k, 0.0), "after": after_edges.get(k, 0.0)}
-            for k in all_edge_keys
-        }
-
-        responding_nodes = [
-            {"node_id": nid, "similarity": sim}
-            for nid, sim in miner_pool.rank_entry_nodes(query_embedding)
-        ]
-
-        # Unbrowse external context (non-blocking)
-        unbrowse_context: str | None = None
-        unbrowse_used = False
-        if unbrowse_client.api_key:
-            try:
-                ub_results = await unbrowse_client.fetch_context(
-                    session.get("prior_narrative", "")[:200] or dest_id, dest_id
-                )
-                if ub_results:
-                    unbrowse_context = unbrowse_client.format_for_prompt(ub_results)
-                    unbrowse_used = True
-            except Exception:
-                pass
-
-        # NLA agreement (reuse session_id as proposal_id for continuity)
-        nla_agreement_obj = nla_client.build_proposal_agreement(
-            proposal_id=req.session_id,
-            proposer_hotkey="demo-hotkey",
-            node_id=dest_id,
-            proposal_type="TRAVERSE",
-            bond_tao=0.0,
-            voting_deadline_block=0,
-        )
-
-        # Update session
-        session["player_path"] = new_path
-        session["current_node_id"] = req.destination_node_id
-        session["prior_narrative"] = (
-            session["prior_narrative"] + "\n\n" + passage
-        ).strip()
-
-        if not adjacent:
-            session["state"] = "terminal"
-
-        return {
-            "session_id": req.session_id,
-            "current_node_id": req.destination_node_id,
-            "narrative_passage": passage,
-            "choice_cards": choice_cards,
-            "knowledge_synthesis": result.get("knowledge_synthesis"),
-            "player_path": new_path,
-            "state": session["state"],
-            "scores": scores,
-            "emission_snapshot": emission_snapshot,
-            "graph_delta": graph_delta,
-            "responding_nodes": responding_nodes,
-            "unbrowse_used": unbrowse_used,
-            "unbrowse_context": unbrowse_context,
-            "nla_agreement": {
-                "agreement_text": nla_agreement_obj.agreement_text,
-                "status": nla_agreement_obj.status,
-            },
-        }
-
-    @app.get("/session/{session_id}")
-    async def get_session(session_id: str) -> dict[str, Any]:
-        session = _sessions.get(session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {
-            "session_id": session["session_id"],
-            "state": session["state"],
-            "current_node_id": session["current_node_id"],
-            "player_path": session["player_path"],
-        }
-
-    @app.get("/graph/edges")
-    async def graph_edges() -> list[dict]:
-        """Return all edges with weights and traversal counts."""
-        edges = []
-        for source_id, dests in graph_store._mem._adj.items():
-            for dest_id, edge in dests.items():
-                edges.append({
-                    "source_id": edge.source_id,
-                    "dest_id": edge.dest_id,
-                    "weight": edge.weight,
-                    "traversal_count": edge.traversal_count,
-                })
-        return edges
-
-    @app.get("/graph/node/{node_id}")
-    async def graph_node(node_id: str) -> dict:
-        """Return node metadata, state, and outgoing edges."""
-        node = graph_store._mem.get_node(node_id)
-        if node is None:
-            raise HTTPException(status_code=404, detail="Node not found")
-        neighbours = graph_store.neighbours(node_id)
-        neighbour_edges = []
-        for nb in neighbours:
-            edge = graph_store._mem._adj.get(node_id, {}).get(nb)
-            if edge:
-                neighbour_edges.append({
-                    "dest_id": nb,
-                    "weight": edge.weight,
-                    "traversal_count": edge.traversal_count,
-                })
-        return {
-            "node_id": node.node_id,
-            "state": node.state,
-            "metadata": node.metadata,
-            "neighbours": neighbour_edges,
-        }
-
     return app
-
-
-def _validate_choice_cards(raw_cards: list, valid_nodes: list[str]) -> list[dict]:
-    """Filter and normalise choice cards to only reference valid adjacent nodes."""
-    valid_set = set(valid_nodes)
-    cards: list[dict] = []
-    for card in raw_cards:
-        if not isinstance(card, dict):
-            continue
-        dest = card.get("destination_node_id", "")
-        if dest in valid_set:
-            cards.append({
-                "text": card.get("text", f"Go to {dest}"),
-                "destination_node_id": dest,
-                "edge_weight_delta": float(card.get("edge_weight_delta", 0.0)),
-                "thematic_color": card.get("thematic_color", "#888888"),
-            })
-    # If LLM hallucinated bad node IDs, provide fallback cards
-    if not cards and valid_nodes:
-        for node_id in valid_nodes[:3]:
-            cards.append({
-                "text": f"Travel to {node_id}",
-                "destination_node_id": node_id,
-                "edge_weight_delta": 0.0,
-                "thematic_color": "#888888",
-            })
-    return cards
 
 
 import os as _os

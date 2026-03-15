@@ -355,6 +355,24 @@ class GraphStore:
         """Bulk-insert nodes and edges into the in-memory graph."""
         self._mem.bulk_load(nodes, edges)
 
+    def get_node(self, node_id: str) -> Node | None:
+        """Return a single node by ID, or None."""
+        return self._mem.get_node(node_id)
+
+    def get_all_nodes(self) -> list[Node]:
+        """Return all nodes (all states)."""
+        with self._mem._lock:
+            return list(self._mem._nodes.values())
+
+    def get_all_edges(self) -> list[Edge]:
+        """Return all edges."""
+        with self._mem._lock:
+            return [
+                edge
+                for dests in self._mem._adj.values()
+                for edge in dests.values()
+            ]
+
     def stats(self) -> dict:
         """Return graph statistics."""
         return self._mem.stats()
