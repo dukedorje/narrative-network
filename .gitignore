@@ -34,6 +34,7 @@ storybook-static
 # Python
 __pycache__
 *.pyc
+*.pkl
 .venv
 .pytest_cache
 uv.lock
