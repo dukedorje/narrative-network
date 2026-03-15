@@ -1,6 +1,6 @@
 # Narrative Network — Product Requirements Document
 
-**Subnet:** Bittensor Subnet 42 (target)
+**Subnet:** Bittensor (subnet ID TBD)
 **Status:** Pre-alpha / Architecture
 **Last updated:** 2026-03-15
 

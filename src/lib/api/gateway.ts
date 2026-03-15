@@ -135,7 +135,7 @@ export async function getSession(sessionId: string): Promise<SessionResponseT> {
 /**
  * Gateway health check.
  *
- * Returns netuid (42), active/total session counts. In dev mode the
+ * Returns netuid, active/total session counts. In dev mode the
  * response includes additional graph_stats and loaded_corpus_nodes.
  */
 export async function health(): Promise<HealthResponseT> {

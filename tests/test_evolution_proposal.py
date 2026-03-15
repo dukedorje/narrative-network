@@ -88,7 +88,7 @@ class TestProposalSubmitterBuild:
         wallet = MockWallet(hotkey_address="5GrwvaEF")
         subtensor = MockSubtensor()
         subtensor.get_current_block = lambda: 5000
-        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=42, min_bond_tao=1.0)
+        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=0, min_bond_tao=1.0)
 
     def test_build_creates_draft(self, submitter):
         p = submitter.build(ProposalType.ADD_NODE, "quantum-01")
@@ -120,7 +120,7 @@ class TestProposalSubmitterValidation:
         wallet = MockWallet(hotkey_address="hk")
         subtensor = MockSubtensor()
         subtensor.get_current_block = lambda: 1000
-        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=42)
+        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=0)
 
     def test_validate_empty_node_id_raises(self, submitter):
         p = NodeProposal(
@@ -158,7 +158,7 @@ class TestNLADraftCreation:
         wallet = MockWallet(hotkey_address="5GrwvaEF")
         subtensor = MockSubtensor()
         subtensor.get_current_block = lambda: 5000
-        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=42)
+        return ProposalSubmitter(wallet=wallet, subtensor=subtensor, netuid=0)
 
     def test_lock_bond_attaches_nla_agreement(self, submitter):
         p = NodeProposal(

@@ -49,7 +49,7 @@ class TestBuildProposalAgreement:
         assert "quantum-physics" in a.agreement_text
         assert "2.5000 TAO" in a.agreement_text
         assert "Block 100000" in a.agreement_text
-        assert "netuid 42" in a.agreement_text
+        assert "Narrative Network subnet" in a.agreement_text
 
     def test_proposal_id_stored(self, client):
         a = client.build_proposal_agreement("p1", "hk", "n1", "ADD_NODE", 1.0, 7200)

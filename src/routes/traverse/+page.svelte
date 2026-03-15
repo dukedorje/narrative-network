@@ -160,7 +160,7 @@
 
 		<div class="hero">
 			<div class="hero-content">
-				<div class="hero-badge">Bittensor Subnet 42</div>
+				<div class="hero-badge">Narrative Network</div>
 				<h1 class="hero-title">Futograph</h1>
 				<p class="hero-subtitle">Navigate the living knowledge graph</p>
 				<div class="suggested-queries">

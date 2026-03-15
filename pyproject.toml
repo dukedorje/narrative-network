@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "narrative-network"
 version = "0.1.0"
-description = "Bittensor Subnet 42 — Living knowledge graph with comparative attestation"
+description = "Narrative Network — Living knowledge graph with comparative attestation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

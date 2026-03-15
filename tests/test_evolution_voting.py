@@ -24,7 +24,7 @@ def subtensor():
 def engine(subtensor):
     return VotingEngine(
         subtensor=subtensor,
-        netuid=42,
+        netuid=0,
         voting_open_blocks=100,
         quorum_ratio=0.10,
         pass_ratio=0.60,

@@ -7,7 +7,7 @@ Each NodeProposal generates an NLA that specifies:
   - Bond escrow conditions (who pays, how much)
   - Settlement trigger (vote outcome at block N)
   - Release terms (TAO returned on ACCEPTED, burned on REJECTED)
-  - Arbiter (stake-weighted Yuma Consensus on netuid 42)
+  - Arbiter (stake-weighted Yuma Consensus)
 
 Attestations are recorded via EAS; all settlements are auditable on-chain.
 All API calls are non-blocking — failures are logged and do not halt
@@ -121,7 +121,7 @@ class NLASettlementClient:
         to Alkahest BaseEscrowObligation + stake-weighted VotingArbiter.
         """
         text = (
-            f"Proposal Bond Agreement — Narrative Network Subnet 42\n\n"
+            f"Proposal Bond Agreement — Narrative Network Narrative Network\n\n"
             f"Proposer: {proposer_hotkey}\n"
             f"Proposal ID: {proposal_id}\n"
             f"Action: {proposal_type} node '{node_id}'\n"
@@ -135,7 +135,7 @@ class NLASettlementClient:
             f"the bond is burned to the subnet treasury.\n"
             f"- If the proposal is not finalised by block {voting_deadline_block}, "
             f"the bond is automatically returned to the proposer.\n"
-            f"Arbiter: Stake-weighted Yuma Consensus on Bittensor netuid 42."
+            f"Arbiter: Stake-weighted Yuma Consensus on Bittensor the Narrative Network subnet."
         )
         return NLAgreement(
             agreement_text=text,
@@ -158,7 +158,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for bond return on successful node integration."""
         text = (
-            f"Node Integration Bond Return — Narrative Network Subnet 42\n\n"
+            f"Node Integration Bond Return — Narrative Network Narrative Network\n\n"
             f"Node: {node_id}\n"
             f"Proposal: {proposal_id}\n"
             f"Owner: {proposer_hotkey}\n\n"
@@ -190,7 +190,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for slash-on-collapse settlement."""
         text = (
-            f"Node Collapse Penalty Agreement — Narrative Network Subnet 42\n\n"
+            f"Node Collapse Penalty Agreement — Narrative Network Narrative Network\n\n"
             f"Node: {node_id}\n"
             f"Owner: {proposer_hotkey}\n"
             f"Epoch: {epoch}\n"

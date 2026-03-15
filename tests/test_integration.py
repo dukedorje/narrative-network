@@ -116,7 +116,7 @@ class TestFullEpoch:
 
         assert len(subtensor.set_weights_calls) == 1
         call = subtensor.set_weights_calls[0]
-        assert call["netuid"] == 42
+        assert call["netuid"] == 0
         assert call["mechid"] == 0
 
     async def test_edges_decayed(self, integrated_setup):

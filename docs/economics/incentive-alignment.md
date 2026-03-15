@@ -1,6 +1,6 @@
 # Incentive Alignment
 
-Bittensor Subnet 42 — Narrative Network
+Narrative Network
 
 ---
 

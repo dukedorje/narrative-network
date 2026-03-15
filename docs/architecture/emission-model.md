@@ -1,6 +1,6 @@
 # Emission Model
 
-This document specifies how Narrative Network (Bittensor subnet 42) uses its validator weight-setting to distribute miner emissions. Under Dynamic TAO (dTAO), the protocol enforces a fixed emission split — our role is to set weights that direct the miner share toward the behaviors we want to incentivize.
+This document specifies how Narrative Network uses its validator weight-setting to distribute miner emissions. Under Dynamic TAO (dTAO), the protocol enforces a fixed emission split — our role is to set weights that direct the miner share toward the behaviors we want to incentivize.
 
 ---
 

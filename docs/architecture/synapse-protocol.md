@@ -1,6 +1,6 @@
-# Synapse Protocol — Narrative Network (Subnet 42)
+# Synapse Protocol — Narrative Network
 
-**Subnet:** Narrative Network, SN42
+**Subnet:** Narrative Network
 **Protocol version:** defined by `SPEC_VERSION` in `subnet_config`
 
 ---

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Narrative Network is Bittensor Subnet 42 — a living knowledge graph with comparative attestation. It has two distinct codebases in one repo:
+Narrative Network is a Bittensor subnet — a living knowledge graph with comparative attestation. It has two distinct codebases in one repo:
 
 1. **SvelteKit web app** (TypeScript/Svelte 5) — gateway UI for traversing the knowledge graph
 2. **Python subnet** — Bittensor validator, miners, orchestrator, graph evolution, and scoring

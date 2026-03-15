@@ -1,4 +1,4 @@
-# Narrative Network — Bittensor Subnet 42
+# Narrative Network — Bittensor Subnet
 
 ## A Living Knowledge Graph with Comparative Attestation
 
@@ -16,7 +16,7 @@ Narrative Network produces **AI-narrated knowledge traversals** — interactive 
 
 **Application Developers:** The gateway exposes a clean REST + WebSocket API (`POST /enter`, `POST /hop`, `WS /session/{id}/live`, `GET /graph/nodes`, `POST /graph/search`) enabling third-party apps to build on the knowledge graph. Any application needing structured, quality-scored knowledge retrieval with narrative context can consume the subnet's output.
 
-**The Bittensor Ecosystem:** Subnet 42 demonstrates a new primitive — **comparative attestation** — where multiple miners independently narrate the same traversal hop, and validators score them on 4 orthogonal axes. This creates a marketplace for knowledge quality that doesn't exist in traditional search or RAG pipelines.
+**The Bittensor Ecosystem:** Narrative Network demonstrates a new primitive — **comparative attestation** — where multiple miners independently narrate the same traversal hop, and validators score them on 4 orthogonal axes. This creates a marketplace for knowledge quality that doesn't exist in traditional search or RAG pipelines.
 
 ### Why This Demand Is Real
 
@@ -307,7 +307,7 @@ Deploys the full stack: validator (StatefulSet), gateway (HPA 2-5), domain miner
 **All 69 tunable parameters** are configurable via ConfigMap with `AXON_` prefix — zero code changes for testnet → mainnet transition:
 ```yaml
 AXON_NETWORK: "finney"     # Switch from local → testnet → mainnet
-AXON_NETUID: "42"           # Subnet 42
+AXON_NETUID: "0"            # Set on subnet registration
 AXON_TRAVERSAL_WEIGHT: "0.40"
 AXON_EPOCH_SLEEP_S: "60"
 # ... 65 more parameters
@@ -376,7 +376,7 @@ Ingress configured for **futograph.online** with Let's Encrypt TLS — live depl
 
 ## Summary
 
-Narrative Network is a **production-ready, sovereign knowledge graph** on Bittensor Subnet 42 that:
+Narrative Network is a **production-ready, sovereign knowledge graph** on Bittensor Subnet that:
 
 1. **Creates real demand** — interactive AI-narrated knowledge traversals that improve over time
 2. **Sustains itself** — minimal operational costs (no GPU, no vector DB), multiple revenue paths, self-reinforcing quality economics

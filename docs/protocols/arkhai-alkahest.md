@@ -169,4 +169,4 @@ AXON_NLA_ENDPOINT=https://...  # Override default Arkhai endpoint
 AXON_NLA_CHAIN=base            # EVM chain for Alkahest contracts (default: base)
 ```
 
-All NLA calls are non-blocking — failures log a warning and the Bittensor proposal flow continues. This ensures Subnet 42 governance is never blocked by EVM infrastructure availability.
+All NLA calls are non-blocking — failures log a warning and the Bittensor proposal flow continues. This ensures Narrative Network governance is never blocked by EVM infrastructure availability.

@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: narrative-network
 data:
   # Bittensor
-  AXON_NETUID: "42"
+  AXON_NETUID: "0"
   AXON_NETWORK: "local"
 
   # Embedding

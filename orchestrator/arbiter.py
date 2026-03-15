@@ -113,7 +113,7 @@ class TraversalArbiter:
             f"  - {c}: {node_descriptions.get(c, c)}" for c in candidates
         )
         return (
-            f"Traversal Hop Arbitration — Narrative Network Subnet 42\n\n"
+            f"Traversal Hop Arbitration — Narrative Network\n\n"
             f"Session: {session_id}\n"
             f"Player path: {path_str}\n"
             f"Selected hop: {source_node} → {dest_node}\n"

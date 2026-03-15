@@ -1,6 +1,6 @@
 # Player Dashboard
 
-Bittensor Subnet 42 — Narrative Network
+Narrative Network
 
 ---
 

@@ -1,6 +1,6 @@
 # Narrative Network — System Architecture Overview
 
-**Bittensor Subnet 42 | The network that thinks by being traversed.**
+**The network that thinks by being traversed.**
 
 ---
 
@@ -171,7 +171,7 @@ The Gateway is the only internet-facing component. All inter-component communica
 
 ### 2.6 Subtensor Chain
 
-The canonical on-chain registry for Subnet 42. Validators read the metagraph to discover active miner UIDs, verify stake, and commit scored weights. Key on-chain objects:
+The canonical on-chain registry for the Narrative Network subnet. Validators read the metagraph to discover active miner UIDs, verify stake, and commit scored weights. Key on-chain objects:
 
 - **UID registry** — maps miner hotkeys to node IDs and metadata CIDs
 - **Stake table** — TAO staked per UID; governs emission share

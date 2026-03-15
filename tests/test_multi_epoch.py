@@ -143,7 +143,7 @@ class TestMultiEpoch:
         # One set_weights call per epoch
         assert len(validator.subtensor.set_weights_calls) == 3
         for call in validator.subtensor.set_weights_calls:
-            assert call["netuid"] == 42
+            assert call["netuid"] == 0
             assert call["mechid"] == 0
 
     async def test_step_tracks_epochs(self, good_miner_setup):
