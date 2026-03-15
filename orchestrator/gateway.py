@@ -292,14 +292,192 @@ def create_app(
 
 
 # ---------------------------------------------------------------------------
-# Standalone / dev app instance
+# Standalone / dev app instance — full local gateway with in-process miners
 # ---------------------------------------------------------------------------
 
+
+class _LocalMinerPool:
+    """In-process miner pool: loads corpus per node, does chunk retrieval via numpy."""
+
+    def __init__(self, corpus_map: dict[str, list], embedder: Embedder) -> None:
+        from domain.corpus import CorpusLoader, Chunk
+
+        self._chunks: dict[str, list[Chunk]] = {}
+        self._centroids: dict[str, list[float]] = {}
+        self._embedder = embedder
+
+        for node_id, file_paths in corpus_map.items():
+            if not file_paths:
+                continue
+            # Use the first file's parent as corpus_dir
+            corpus_dir = file_paths[0].parent
+            if not corpus_dir.exists():
+                continue
+            cache_path = corpus_dir.parent / ".cache" / f"{node_id}.pkl"
+            loader = CorpusLoader(
+                corpus_dir=str(corpus_dir),
+                cache_path=str(cache_path),
+            )
+            chunks = loader.load()
+            if chunks:
+                self._chunks[node_id] = chunks
+                self._centroids[node_id] = loader.centroid
+
+    def retrieve_chunks(
+        self, node_id: str, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict]:
+        """Retrieve top-k chunks from a specific node's corpus."""
+        import numpy as np
+
+        chunks = self._chunks.get(node_id, [])
+        if not chunks:
+            return []
+
+        query_emb = np.array(query_embedding, dtype=np.float32)
+        chunk_embs = np.array([c.embedding for c in chunks], dtype=np.float32)
+        scores = chunk_embs @ query_emb
+        k = min(top_k, len(chunks))
+        top_indices = np.argpartition(scores, -k)[-k:]
+        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+
+        return [
+            {
+                "id": chunks[i].id,
+                "text": chunks[i].text,
+                "hash": chunks[i].hash,
+                "score": float(scores[i]),
+            }
+            for i in top_indices
+        ]
+
+    def rank_entry_nodes(
+        self, query_embedding: list[float], top_k: int = 3
+    ) -> list[tuple[str, float]]:
+        """Rank all nodes by centroid similarity to query. Returns [(node_id, similarity)]."""
+        import numpy as np
+
+        query_emb = np.array(query_embedding, dtype=np.float32)
+        scored: list[tuple[str, float]] = []
+        for node_id, centroid in self._centroids.items():
+            centroid_vec = np.array(centroid, dtype=np.float32)
+            sim = float(centroid_vec @ query_emb)
+            scored.append((node_id, sim))
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored[:top_k]
+
+    @property
+    def loaded_nodes(self) -> list[str]:
+        return list(self._chunks.keys())
+
+
+class _LocalNarrativeGenerator:
+    """Calls OpenRouter directly for narrative hop generation."""
+
+    def __init__(self) -> None:
+        from subnet.config import (
+            NARRATIVE_MAX_TOKENS,
+            NARRATIVE_MODEL,
+            NARRATIVE_TEMPERATURE,
+            OPENROUTER_BASE_URL,
+        )
+        import os
+
+        self._model = NARRATIVE_MODEL
+        self._max_tokens = NARRATIVE_MAX_TOKENS
+        self._temperature = NARRATIVE_TEMPERATURE
+        self._base_url = OPENROUTER_BASE_URL
+        self._api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                api_key=self._api_key or "sk-placeholder",
+                base_url=self._base_url,
+            )
+        return self._client
+
+    async def generate_hop(
+        self,
+        destination_node_id: str,
+        player_path: list[str],
+        prior_narrative: str,
+        retrieved_chunks: list[dict],
+        adjacent_nodes: list[str],
+        persona: str = "explorer",
+    ) -> dict[str, Any]:
+        """Generate a narrative hop passage via OpenRouter. Returns parsed result dict."""
+        import json
+        from domain.narrative.prompt import build_prompt
+
+        system_prompt, user_prompt = build_prompt(
+            destination_node_id=destination_node_id,
+            player_path=player_path,
+            prior_narrative=prior_narrative,
+            retrieved_chunks=retrieved_chunks,
+            persona=persona,
+            num_choices=min(3, max(1, len(adjacent_nodes))),
+        )
+
+        # Inject adjacent node IDs so the LLM can generate valid choice cards
+        user_prompt += (
+            f"\n\nAvailable destination nodes for choice cards: {adjacent_nodes}\n"
+            "You MUST use only these node IDs in your choice_cards destination_node_id fields."
+        )
+
+        client = self._get_client()
+        try:
+            response = await client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content or ""
+            return json.loads(raw)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("Narrative generation failed: %s", exc)
+            return {
+                "narrative_passage": f"(generation failed: {exc})",
+                "choice_cards": [
+                    {"text": f"Continue to {n}", "destination_node_id": n,
+                     "edge_weight_delta": 0.0, "thematic_color": "#888888"}
+                    for n in adjacent_nodes[:3]
+                ],
+                "knowledge_synthesis": "",
+            }
+
+
 def create_dev_app() -> FastAPI:
-    """Create a standalone gateway for local dev (no Bittensor connection)."""
-    graph_store = GraphStore(db_path=None)  # in-memory only
+    """Create a standalone gateway for local dev — full traversal, no Bittensor."""
+    import logging
+
+    log = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+
+    log.info("Loading seed topology...")
+    from seed.loader import load_topology
+
+    graph_store, corpus_map = load_topology()
+
+    log.info("Loading embedder + corpus (this may take a moment on first run)...")
     embedder = Embedder()
+    miner_pool = _LocalMinerPool(corpus_map, embedder)
+    narrator = _LocalNarrativeGenerator()
     safety_guard = PathSafetyGuard()
+
+    log.info(
+        "Dev gateway ready: %d graph nodes, %d with loaded corpus",
+        graph_store.stats()["node_count"],
+        len(miner_pool.loaded_nodes),
+    )
 
     app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
 
@@ -311,20 +489,197 @@ def create_dev_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    _sessions: dict[SessionID, dict[str, Any]] = {}
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
             "status": "ok",
-            "mode": "standalone",
+            "mode": "dev",
             "netuid": NETUID,
             "graph_stats": graph_store.stats(),
+            "loaded_corpus_nodes": miner_pool.loaded_nodes,
         }
 
     @app.get("/graph/stats")
     async def graph_stats() -> dict:
         return graph_store.stats()
 
+    @app.get("/graph/nodes")
+    async def graph_nodes() -> list[dict]:
+        node_ids = graph_store.get_live_node_ids()
+        return [
+            {
+                "node_id": nid,
+                "has_corpus": nid in miner_pool.loaded_nodes,
+                "neighbours": graph_store.neighbours(nid),
+            }
+            for nid in node_ids
+        ]
+
+    @app.post("/enter", response_model=EnterResponse)
+    async def enter(req: EnterRequest) -> dict[str, Any]:
+        # Embed the query
+        query_embedding = embedder.embed_one(req.query_text)
+
+        # Rank entry nodes by centroid similarity
+        ranked = miner_pool.rank_entry_nodes(query_embedding, top_k=req.top_k_entry)
+        if not ranked:
+            raise HTTPException(status_code=503, detail="No nodes with loaded corpus")
+
+        entry_node_id, similarity = ranked[0]
+
+        # Retrieve chunks from entry node
+        chunks = miner_pool.retrieve_chunks(entry_node_id, query_embedding, top_k=5)
+
+        # Get adjacent nodes for choice cards
+        adjacent = safety_guard.filter_candidates(
+            graph_store.neighbours(entry_node_id), [entry_node_id]
+        )
+
+        # Generate opening narrative
+        result = await narrator.generate_hop(
+            destination_node_id=entry_node_id,
+            player_path=[],
+            prior_narrative="",
+            retrieved_chunks=chunks,
+            adjacent_nodes=adjacent,
+        )
+
+        # Build choice cards from LLM response, filtering to valid adjacent nodes
+        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+
+        import uuid
+
+        session_id = str(uuid.uuid4())
+        _sessions[session_id] = {
+            "session_id": session_id,
+            "state": "active",
+            "current_node_id": entry_node_id,
+            "player_path": [entry_node_id],
+            "prior_narrative": result.get("narrative_passage", ""),
+            "query_embedding": query_embedding,
+        }
+
+        return {
+            "session_id": session_id,
+            "current_node_id": entry_node_id,
+            "narrative_passage": result.get("narrative_passage"),
+            "choice_cards": choice_cards,
+            "knowledge_synthesis": result.get("knowledge_synthesis"),
+            "player_path": [entry_node_id],
+            "state": "active",
+        }
+
+    @app.post("/hop", response_model=HopResponse)
+    async def hop(req: HopRequest) -> dict[str, Any]:
+        session = _sessions.get(req.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session["state"] != "active":
+            raise HTTPException(status_code=400, detail=f"Session is {session['state']}")
+
+        player_path = session["player_path"]
+
+        # Safety checks
+        ok, reason = safety_guard.check_path_length(player_path)
+        if not ok:
+            session["state"] = "terminal"
+            raise HTTPException(status_code=400, detail=reason)
+
+        safe = safety_guard.filter_candidates([req.destination_node_id], player_path)
+        if not safe:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Node {req.destination_node_id} already visited or blocked",
+            )
+
+        # Retrieve chunks from destination node
+        query_embedding = session["query_embedding"]
+        chunks = miner_pool.retrieve_chunks(req.destination_node_id, query_embedding, top_k=5)
+
+        # Get adjacent nodes (excluding already visited)
+        new_path = player_path + [req.destination_node_id]
+        adjacent = safety_guard.filter_candidates(
+            graph_store.neighbours(req.destination_node_id), new_path
+        )
+
+        # Check for terminal state (no adjacent nodes left)
+        if not adjacent:
+            session["state"] = "terminal"
+
+        # Generate narrative hop
+        result = await narrator.generate_hop(
+            destination_node_id=req.destination_node_id,
+            player_path=player_path,
+            prior_narrative=session["prior_narrative"],
+            retrieved_chunks=chunks,
+            adjacent_nodes=adjacent if adjacent else ["(terminal)"],
+        )
+
+        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+
+        # Update session
+        passage = result.get("narrative_passage", "")
+        session["player_path"] = new_path
+        session["current_node_id"] = req.destination_node_id
+        session["prior_narrative"] = (
+            session["prior_narrative"] + "\n\n" + passage
+        ).strip()
+
+        if not adjacent:
+            session["state"] = "terminal"
+
+        return {
+            "session_id": req.session_id,
+            "current_node_id": req.destination_node_id,
+            "narrative_passage": passage,
+            "choice_cards": choice_cards,
+            "knowledge_synthesis": result.get("knowledge_synthesis"),
+            "player_path": new_path,
+            "state": session["state"],
+        }
+
+    @app.get("/session/{session_id}")
+    async def get_session(session_id: str) -> dict[str, Any]:
+        session = _sessions.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {
+            "session_id": session["session_id"],
+            "state": session["state"],
+            "current_node_id": session["current_node_id"],
+            "player_path": session["player_path"],
+        }
+
     return app
+
+
+def _validate_choice_cards(raw_cards: list, valid_nodes: list[str]) -> list[dict]:
+    """Filter and normalise choice cards to only reference valid adjacent nodes."""
+    valid_set = set(valid_nodes)
+    cards: list[dict] = []
+    for card in raw_cards:
+        if not isinstance(card, dict):
+            continue
+        dest = card.get("destination_node_id", "")
+        if dest in valid_set:
+            cards.append({
+                "text": card.get("text", f"Go to {dest}"),
+                "destination_node_id": dest,
+                "edge_weight_delta": float(card.get("edge_weight_delta", 0.0)),
+                "thematic_color": card.get("thematic_color", "#888888"),
+            })
+    # If LLM hallucinated bad node IDs, provide fallback cards
+    if not cards and valid_nodes:
+        for node_id in valid_nodes[:3]:
+            cards.append({
+                "text": f"Travel to {node_id}",
+                "destination_node_id": node_id,
+                "edge_weight_delta": 0.0,
+                "thematic_color": "#888888",
+            })
+    return cards
 
 
 import os as _os
