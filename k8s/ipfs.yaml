@@ -21,7 +21,7 @@ spec:
       initContainers:
         - name: ipfs-init
           image: ipfs/kubo:v0.28.0
-          command: ["ipfs", "init"]
+          command: ["sh", "-c", "ipfs init || true; chown -R 1000:100 /data/ipfs"]
           env:
             - name: IPFS_PATH
               value: /data/ipfs

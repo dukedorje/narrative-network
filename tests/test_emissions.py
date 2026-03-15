@@ -213,3 +213,42 @@ def test_corpus_gate_dominates():
     weights = calc.compute(snaps)
     # Honest miner with low scores still dominates the cheater
     assert weights[1] > weights[0] * 100
+
+
+# ---------------------------------------------------------------------------
+# Pool totals sum to epoch emission
+# ---------------------------------------------------------------------------
+
+
+def test_emission_pools_sum_to_one():
+    """All three pool weights, when combined with shares, sum to ~1.0."""
+    snapshots = [
+        MinerScoreSnapshot(uid=0, traversal_score=0.9, quality_score=0.8, topology_score=0.7, traversal_count=5),
+        MinerScoreSnapshot(uid=1, traversal_score=0.5, quality_score=0.6, topology_score=0.3, traversal_count=3),
+        MinerScoreSnapshot(uid=2, traversal_score=0.2, quality_score=0.3, topology_score=0.9, traversal_count=1),
+    ]
+    calculator = EmissionCalculator()
+    weights = calculator.compute(snapshots)
+    assert abs(sum(weights) - 1.0) < 1e-9
+
+
+@pytest.mark.parametrize("t_share,q_share,top_share", [
+    (0.5, 0.3, 0.2),
+    (0.33, 0.33, 0.34),
+    (0.8, 0.1, 0.1),
+    (0.0, 0.5, 0.5),
+    (1.0, 0.0, 0.0),
+])
+def test_emission_pools_sum_for_various_shares(t_share, q_share, top_share):
+    """Pool totals sum to ~1.0 for various share combinations."""
+    snapshots = [
+        MinerScoreSnapshot(uid=0, traversal_score=0.9, quality_score=0.8, topology_score=0.5, traversal_count=3),
+        MinerScoreSnapshot(uid=1, traversal_score=0.3, quality_score=0.6, topology_score=0.8, traversal_count=1),
+    ]
+    calculator = EmissionCalculator(
+        traversal_share=t_share,
+        quality_share=q_share,
+        topology_share=top_share,
+    )
+    weights = calculator.compute(snapshots)
+    assert abs(sum(weights) - 1.0) < 1e-9

@@ -33,6 +33,22 @@ spec:
           volumeMounts:
             - name: graph-data
               mountPath: /data
+            - name: bt-coldkey
+              mountPath: /root/.bittensor/wallets/default/coldkey
+              subPath: coldkey
+              readOnly: true
+            - name: bt-coldkey
+              mountPath: /root/.bittensor/wallets/default/coldkeypub.txt
+              subPath: coldkeypub.txt
+              readOnly: true
+            - name: bt-hotkey
+              mountPath: /root/.bittensor/wallets/default/hotkeys/default
+              subPath: hotkey
+              readOnly: true
+            - name: bt-hotkey
+              mountPath: /root/.bittensor/wallets/default/hotkeys/defaultpub.txt
+              subPath: hotkeypub.txt
+              readOnly: true
           resources:
             requests:
               memory: "512Mi"
@@ -46,6 +62,13 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 60
             failureThreshold: 3
+      volumes:
+        - name: bt-coldkey
+          secret:
+            secretName: bt-wallet-coldkey
+        - name: bt-hotkey
+          secret:
+            secretName: bt-wallet-validator
       terminationGracePeriodSeconds: 60
   volumeClaimTemplates:
     - metadata:

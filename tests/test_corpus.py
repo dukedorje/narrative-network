@@ -183,3 +183,48 @@ def test_merkle_empty_corpus():
     """MerkleProver with empty chunk list returns zero root (64 hex zeros)."""
     prover = MerkleProver([])
     assert prover.root == "0" * 64
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tree sizes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("n_chunks", [1, 2, 3, 7, 8, 15, 16])
+def test_merkle_prover_tree_sizes(n_chunks):
+    """Prove/verify roundtrip for various tree sizes covering odd/even padding."""
+    chunks = []
+    for i in range(n_chunks):
+        text = f"Chunk {i} content for tree size test {n_chunks}"
+        chunks.append(Chunk(
+            id=f"size-test:{i}",
+            source_id="size-test",
+            text=text,
+            hash=hashlib.sha256(text.encode()).hexdigest(),
+        ))
+
+    prover = MerkleProver(chunks)
+    assert prover.root  # non-empty root
+    assert len(prover.root) == 64  # valid hex sha256
+
+    # Verify every chunk proves correctly
+    for i in range(n_chunks):
+        proof = prover.prove(i)
+        assert MerkleProver.verify(proof, prover.root), f"Chunk {i} failed for tree size {n_chunks}"
+
+
+def test_chunk_text_single_word():
+    """Single word text produces one chunk."""
+    loader = CorpusLoader(corpus_dir="/tmp/nonexistent", chunk_words=200)
+    chunks = loader._chunk_text("hello", source_id="single")
+    assert len(chunks) == 1
+    assert chunks[0].text == "hello"
+
+
+def test_chunk_text_exactly_max_words():
+    """Text exactly at chunk_words (with no overlap) produces one chunk."""
+    loader = CorpusLoader(corpus_dir="/tmp/nonexistent", chunk_words=10, overlap_words=0)
+    text = " ".join(["word"] * 10)
+    chunks = loader._chunk_text(text, source_id="exact")
+    assert len(chunks) == 1
+    assert len(chunks[0].text.split()) == 10

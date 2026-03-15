@@ -36,6 +36,22 @@ spec:
           volumeMounts:
             - name: corpus-data
               mountPath: /corpus
+            - name: bt-coldkey
+              mountPath: /root/.bittensor/wallets/default/coldkey
+              subPath: coldkey
+              readOnly: true
+            - name: bt-coldkey
+              mountPath: /root/.bittensor/wallets/default/coldkeypub.txt
+              subPath: coldkeypub.txt
+              readOnly: true
+            - name: bt-hotkey
+              mountPath: /root/.bittensor/wallets/default/hotkeys/default
+              subPath: hotkey
+              readOnly: true
+            - name: bt-hotkey
+              mountPath: /root/.bittensor/wallets/default/hotkeys/defaultpub.txt
+              subPath: hotkeypub.txt
+              readOnly: true
           resources:
             requests:
               memory: "512Mi"
@@ -61,6 +77,12 @@ spec:
         - name: corpus-data
           persistentVolumeClaim:
             claimName: domain-miner-corpus
+        - name: bt-coldkey
+          secret:
+            secretName: bt-wallet-coldkey
+        - name: bt-hotkey
+          secret:
+            secretName: bt-wallet-domain-miner
       terminationGracePeriodSeconds: 30
 ---
 apiVersion: v1

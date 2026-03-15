@@ -36,3 +36,26 @@ def test_choice_card_model():
     card = ChoiceCard(text="Enter the void", destination_node_id="void-01")
     assert card.edge_weight_delta == 0.0
     assert card.thematic_color == "#888888"
+
+
+def test_weight_commit_normalise_sums_to_one():
+    """After normalise(), weights sum to 1.0."""
+    wc = WeightCommit(epoch=1, validator_uid=0, miner_scores={0: 5.0, 1: 3.0, 2: 2.0})
+    wc.normalise()
+    assert abs(sum(wc.miner_scores.values()) - 1.0) < 1e-9
+
+
+def test_weight_commit_normalise_preserves_zero():
+    """Zero-score miners remain at 0 after normalisation (they get 0/total = 0)."""
+    wc = WeightCommit(epoch=1, validator_uid=0, miner_scores={0: 4.0, 1: 0.0, 2: 6.0})
+    wc.normalise()
+    assert wc.miner_scores[1] == 0.0
+    assert abs(sum(wc.miner_scores.values()) - 1.0) < 1e-9
+
+
+def test_weight_commit_normalise_all_zero():
+    """All-zero scores remain all-zero (0/0 = 0, no division by zero)."""
+    wc = WeightCommit(epoch=1, validator_uid=0, miner_scores={0: 0.0, 1: 0.0})
+    wc.normalise()
+    assert wc.miner_scores[0] == 0.0
+    assert wc.miner_scores[1] == 0.0
