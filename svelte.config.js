@@ -13,6 +13,13 @@ const config = {
 		// See https://svelte.dev/docs/kit/adapters for more information about adapters.
 		adapter: adapter()
 	},
+	compilerOptions: {
+		warningFilter: (warning) => {
+			// Intentional one-time capture of page data props into local state
+			if (warning.code === 'state_referenced_locally') return false;
+			return true;
+		}
+	},
 	extensions: ['.svelte', '.svx']
 };
 

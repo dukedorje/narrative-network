@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import bittensor as bt
+import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,6 +24,8 @@ from orchestrator.embedder import Embedder
 from orchestrator.router import Router
 from orchestrator.safety_guard import PathSafetyGuard
 from orchestrator.session import OrchestratorSession, SessionState
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -429,14 +436,243 @@ def create_app(
 # Standalone / dev app instance
 # ---------------------------------------------------------------------------
 
+class _LocalMinerPool:
+    """In-process corpus retrieval for local/dev mode.
+
+    Loads seed corpora, embeds chunks, and serves retrieval requests
+    without requiring a running domain miner.
+    """
+
+    def __init__(
+        self,
+        corpus_map: dict[str, list[Path]],
+        embedder: Embedder,
+        graph_store: GraphStore,
+    ) -> None:
+        self._embedder = embedder
+        self._graph_store = graph_store
+        # node_id -> list of {id, text, embedding}
+        self._node_chunks: dict[str, list[dict]] = {}
+        # node_id -> centroid embedding
+        self._centroids: dict[str, np.ndarray] = {}
+
+        self._load_corpora(corpus_map)
+
+    def _load_corpora(self, corpus_map: dict[str, list[Path]]) -> None:
+        for node_id, corpus_files in corpus_map.items():
+            chunks: list[dict] = []
+            texts: list[str] = []
+            for fpath in corpus_files:
+                if fpath.exists():
+                    content = fpath.read_text(encoding="utf-8", errors="replace")
+                    # Simple chunking: ~200 words per chunk
+                    words = content.split()
+                    for i in range(0, len(words), 160):
+                        chunk_text = " ".join(words[i : i + 200])
+                        if chunk_text.strip():
+                            chunks.append({"id": f"{node_id}:{len(chunks)}", "text": chunk_text})
+                            texts.append(chunk_text)
+            if texts:
+                embeddings = self._embedder.embed(texts)
+                for chunk, emb in zip(chunks, embeddings):
+                    chunk["embedding"] = np.array(emb, dtype=np.float32)
+                centroid = np.mean(
+                    [c["embedding"] for c in chunks], axis=0
+                )
+                norm = np.linalg.norm(centroid)
+                if norm > 0:
+                    centroid = centroid / norm
+                self._centroids[node_id] = centroid
+            self._node_chunks[node_id] = chunks
+        log.info(
+            "LocalMinerPool: loaded %d nodes, %d total chunks",
+            len(self._node_chunks),
+            sum(len(c) for c in self._node_chunks.values()),
+        )
+
+    def rank_entry_nodes(
+        self, query_embedding: list[float], top_k: int = 3
+    ) -> list[tuple[str, float]]:
+        """Rank nodes by cosine similarity between query and corpus centroid."""
+        q = np.array(query_embedding, dtype=np.float32)
+        scores: list[tuple[str, float]] = []
+        for node_id, centroid in self._centroids.items():
+            node = self._graph_store.get_node(node_id)
+            if node and node.state == "Live":
+                sim = float(centroid @ q)
+                scores.append((node_id, sim))
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+    def retrieve_chunks(
+        self, node_id: str, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict]:
+        """Return top-k chunks from node's corpus by cosine similarity."""
+        chunks = self._node_chunks.get(node_id, [])
+        if not chunks:
+            return []
+        q = np.array(query_embedding, dtype=np.float32)
+        scored = []
+        for chunk in chunks:
+            emb = chunk.get("embedding")
+            if emb is not None:
+                sim = float(emb @ q)
+                scored.append((sim, chunk))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [
+            {"id": c["id"], "text": c["text"], "score": s}
+            for s, c in scored[:top_k]
+        ]
+
+
+class _LocalNarrator:
+    """In-process narrative generation via OpenRouter for local/dev mode."""
+
+    def __init__(self) -> None:
+        self._client = None
+        self._api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        from subnet.config import (
+            NARRATIVE_MAX_TOKENS,
+            NARRATIVE_MODEL,
+            NARRATIVE_TEMPERATURE,
+            OPENROUTER_BASE_URL,
+        )
+
+        self._model = NARRATIVE_MODEL
+        self._max_tokens = NARRATIVE_MAX_TOKENS
+        self._temperature = NARRATIVE_TEMPERATURE
+        self._base_url = OPENROUTER_BASE_URL
+
+        if not self._api_key:
+            log.warning(
+                "OPENROUTER_API_KEY not set — narrative generation will return placeholders"
+            )
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                api_key=self._api_key or "sk-placeholder",
+                base_url=self._base_url,
+            )
+        return self._client
+
+    async def generate_hop(
+        self,
+        destination_node_id: str,
+        player_path: list[str],
+        prior_narrative: str,
+        retrieved_chunks: list[dict],
+        adjacent_nodes: list[str] | None = None,
+    ) -> dict:
+        """Generate a narrative hop passage via OpenRouter LLM."""
+        from domain.narrative.prompt import build_prompt
+
+        system_prompt, user_prompt = build_prompt(
+            destination_node_id=destination_node_id,
+            player_path=player_path,
+            prior_narrative=prior_narrative,
+            retrieved_chunks=retrieved_chunks,
+            persona="neutral",
+            num_choices=min(3, len(adjacent_nodes)) if adjacent_nodes else 3,
+        )
+
+        # Append adjacent node info so the LLM knows valid destinations
+        if adjacent_nodes:
+            user_prompt += (
+                "\n\n## Available destination nodes for choice cards\n"
+                + "\n".join(f"- {nid}" for nid in adjacent_nodes)
+                + "\n\nIMPORTANT: Each choice card's destination_node_id MUST be "
+                "one of the nodes listed above."
+            )
+
+        if not self._api_key:
+            # Fallback: return a basic template if no API key
+            return self._placeholder(destination_node_id, adjacent_nodes or [])
+
+        client = self._get_client()
+        try:
+            response = await client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content or ""
+            result = json.loads(raw)
+            log.info("LLM generated passage for %s (%d chars)", destination_node_id, len(result.get("narrative_passage", "")))
+            return result
+        except json.JSONDecodeError as exc:
+            log.warning("Narrator: JSON parse error: %s", exc)
+            return self._placeholder(destination_node_id, adjacent_nodes or [])
+        except Exception as exc:
+            log.error("Narrator: generation error: %s", exc)
+            return self._placeholder(destination_node_id, adjacent_nodes or [])
+
+    def _placeholder(self, node_id: str, adjacent: list[str]) -> dict:
+        """Fallback when OpenRouter is unavailable."""
+        cards = [
+            {
+                "text": f"Explore {nid.replace('-', ' ')}",
+                "destination_node_id": nid,
+                "edge_weight_delta": 0.0,
+                "thematic_color": "#6ee7b7",
+            }
+            for nid in adjacent[:3]
+        ]
+        return {
+            "narrative_passage": (
+                f"(No OPENROUTER_API_KEY configured — set it to enable LLM narrative generation.) "
+                f"You are at {node_id.replace('-', ' ').title()}."
+            ),
+            "choice_cards": cards,
+            "knowledge_synthesis": "",
+        }
+
+
+def _validate_choice_cards(raw_cards: list[dict], valid_nodes: list[str]) -> list[dict]:
+    """Filter and normalize choice cards, keeping only those pointing to valid adjacent nodes."""
+    valid_set = set(valid_nodes)
+    validated: list[dict] = []
+    for card in raw_cards:
+        if not isinstance(card, dict):
+            continue
+        dest = card.get("destination_node_id", "")
+        if dest in valid_set:
+            validated.append({
+                "text": card.get("text", f"Explore {dest}"),
+                "destination_node_id": dest,
+                "edge_weight_delta": float(card.get("edge_weight_delta", 0.0)),
+                "thematic_color": card.get("thematic_color", "#888888"),
+            })
+    # If LLM returned no valid cards, generate defaults from adjacent nodes
+    if not validated:
+        for nid in valid_nodes[:3]:
+            validated.append({
+                "text": f"Explore {nid.replace('-', ' ')}",
+                "destination_node_id": nid,
+                "edge_weight_delta": 0.0,
+                "thematic_color": "#6ee7b7",
+            })
+    return validated
+
+
 def create_dev_app() -> FastAPI:
     """Create a standalone gateway for local dev (no Bittensor connection)."""
     from seed.loader import load_topology
 
     graph_store = GraphStore(db_path=None)  # in-memory only
-    load_topology(graph_store=graph_store)
+    _, corpus_map = load_topology(graph_store=graph_store)
     embedder = Embedder()
     safety_guard = PathSafetyGuard()
+
+    miner_pool = _LocalMinerPool(corpus_map, embedder, graph_store)
+    narrator = _LocalNarrator()
 
     app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
 
@@ -624,9 +860,7 @@ def create_dev_app() -> FastAPI:
     return app
 
 
-import os as _os
-
-if _os.environ.get("AXON_NETWORK") == "local":
+if os.environ.get("AXON_NETWORK") == "local":
     # Standalone dev mode — no Bittensor wallet/subtensor needed
     app = create_dev_app()
 else:
@@ -637,7 +871,7 @@ else:
 def main() -> None:
     import uvicorn
 
-    network = _os.environ.get("AXON_NETWORK", "finney")
+    network = os.environ.get("AXON_NETWORK", "finney")
     if network == "local":
         uvicorn.run(
             "orchestrator.gateway:app",

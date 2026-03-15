@@ -58,9 +58,10 @@ spec:
               cpu: "2000m"
           livenessProbe:
             exec:
-              command: ["python", "-c", "import subnet.validator; print('ok')"]
+              command: ["pgrep", "-f", "subnet.validator"]
             initialDelaySeconds: 30
             periodSeconds: 60
+            timeoutSeconds: 5
             failureThreshold: 3
       volumes:
         - name: bt-coldkey

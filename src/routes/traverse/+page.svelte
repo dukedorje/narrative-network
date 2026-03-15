@@ -1,24 +1,21 @@
 <script lang="ts">
+	import { fly, fade } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import TraverseGraph from '$lib/components/traverse/TraverseGraph.svelte';
-	import NarrativePassage from '$lib/components/traverse/NarrativePassage.svelte';
-	import ChoiceCards from '$lib/components/traverse/ChoiceCards.svelte';
-	import KnowledgeSynthesis from '$lib/components/traverse/KnowledgeSynthesis.svelte';
 	import InnerViewPanel from '$lib/components/traverse/InnerViewPanel.svelte';
-	import SessionSummary from '$lib/components/traverse/SessionSummary.svelte';
 
 	let { data } = $props();
 
+	type ChoiceCard = {
+		text: string;
+		destination_node_id: string;
+		edge_weight_delta: number;
+		thematic_color: string;
+	};
+
 	let sessionId = $state<string | null>(null);
 	let currentNodeId = $state<string | null>(null);
-	let narrativePassage = $state<string | null>(null);
-	let choiceCards = $state<
-		Array<{
-			text: string;
-			destination_node_id: string;
-			edge_weight_delta: number;
-			thematic_color: string;
-		}>
-	>([]);
+	let choiceCards = $state<ChoiceCard[]>([]);
 	let knowledgeSynthesis = $state<string | null>(null);
 	let playerPath = $state<string[]>([]);
 	let sessionState = $state<string>('idle');
@@ -27,6 +24,8 @@
 	let hopData = $state<any>(null);
 	let innerViewOpen = $state(false);
 	let errorMessage = $state<string | null>(null);
+	let narrativeHistory = $state<string[]>([]);
+	let narrativeAreaEl = $state<HTMLElement | null>(null);
 
 	const suggestedQueries = [
 		'quantum entanglement',
@@ -35,6 +34,15 @@
 		'deep ocean ecosystems',
 		'artificial general intelligence'
 	];
+
+	// Auto-scroll narrative area to bottom when new passages arrive
+	$effect(() => {
+		if (narrativeHistory.length > 0 && narrativeAreaEl) {
+			requestAnimationFrame(() => {
+				narrativeAreaEl?.scrollTo({ top: narrativeAreaEl.scrollHeight, behavior: 'smooth' });
+			});
+		}
+	});
 
 	async function handleSearch(e?: SubmitEvent) {
 		e?.preventDefault();
@@ -56,12 +64,14 @@
 			const result = await res.json();
 			sessionId = result.session_id;
 			currentNodeId = result.current_node_id;
-			narrativePassage = result.narrative_passage;
 			choiceCards = result.choice_cards ?? [];
 			knowledgeSynthesis = result.knowledge_synthesis;
 			playerPath = result.player_path ?? [];
 			sessionState = result.state === 'terminal' ? 'terminal' : 'active';
 			hopData = result;
+			if (result.narrative_passage) {
+				narrativeHistory = [result.narrative_passage];
+			}
 		} catch {
 			errorMessage = 'Could not connect to the gateway. Is it running?';
 		} finally {
@@ -69,7 +79,7 @@
 		}
 	}
 
-	async function handleHop(destinationNodeId: string) {
+	async function handleHop(card: ChoiceCard) {
 		if (!sessionId) return;
 		loading = true;
 		errorMessage = null;
@@ -78,7 +88,7 @@
 			const res = await fetch('/api/traverse/hop', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ session_id: sessionId, destination_node_id: destinationNodeId })
+				body: JSON.stringify({ session_id: sessionId, destination_node_id: card.destination_node_id })
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ error: 'Hop failed' }));
@@ -87,12 +97,14 @@
 			}
 			const result = await res.json();
 			currentNodeId = result.current_node_id;
-			narrativePassage = result.narrative_passage;
 			choiceCards = result.choice_cards ?? [];
 			knowledgeSynthesis = result.knowledge_synthesis;
 			playerPath = result.player_path ?? [];
 			sessionState = result.state === 'terminal' ? 'terminal' : 'active';
 			hopData = result;
+			if (result.narrative_passage) {
+				narrativeHistory = [...narrativeHistory, result.narrative_passage];
+			}
 		} catch {
 			errorMessage = 'Could not connect to the gateway.';
 		} finally {
@@ -103,7 +115,6 @@
 	function resetSession() {
 		sessionId = null;
 		currentNodeId = null;
-		narrativePassage = null;
 		choiceCards = [];
 		knowledgeSynthesis = null;
 		playerPath = [];
@@ -111,45 +122,42 @@
 		searchQuery = '';
 		hopData = null;
 		errorMessage = null;
+		narrativeHistory = [];
 	}
 
 	function pickSuggestion(q: string) {
 		searchQuery = q;
 		handleSearch();
 	}
+
+	let isTerminal = $derived(
+		sessionState === 'terminal' ||
+			(sessionState === 'active' && !loading && choiceCards.length === 0)
+	);
 </script>
 
 <div class="traverse-page">
-	<!-- Search bar -->
-	<section class="search-bar">
-		<form onsubmit={handleSearch} class="search-form">
-			<input
-				type="text"
-				bind:value={searchQuery}
-				placeholder="Enter a knowledge query..."
-				class="search-input"
-				disabled={loading}
-			/>
-			<button type="submit" class="search-btn" disabled={loading || !searchQuery.trim()}>
-				{loading ? 'Traversing...' : 'Enter the Graph'}
-			</button>
-		</form>
-		<button
-			class="observer-toggle"
-			class:active={innerViewOpen}
-			onclick={() => (innerViewOpen = !innerViewOpen)}
-		>
-			<span class="observer-icon">⬡</span>
-			Network Observer
-		</button>
-	</section>
-
-	{#if errorMessage}
-		<div class="error-banner">{errorMessage}</div>
-	{/if}
-
 	{#if sessionState === 'idle'}
-		<!-- Landing hero -->
+		<!-- ── Splash / Hero ─────────────────────────────────────────── -->
+		<section class="search-bar">
+			<form onsubmit={handleSearch} class="search-form">
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Enter a knowledge query..."
+					class="search-input"
+					disabled={loading}
+				/>
+				<button type="submit" class="search-btn" disabled={loading || !searchQuery.trim()}>
+					{loading ? 'Traversing...' : 'Enter the Graph'}
+				</button>
+			</form>
+		</section>
+
+		{#if errorMessage}
+			<div class="error-banner">{errorMessage}</div>
+		{/if}
+
 		<div class="hero">
 			<div class="hero-content">
 				<div class="hero-badge">Bittensor Subnet 42</div>
@@ -169,58 +177,102 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Active traversal layout -->
-		<div class="traversal-layout">
-			<div class="main-column">
-				<div class="graph-area">
-					<TraverseGraph
-						nodes={data.nodes}
-						edges={data.edges}
-						{playerPath}
-						{currentNodeId}
-					/>
-				</div>
-				<div class="narrative-area">
-					{#if loading}
-						<div class="skeleton">
-							<div class="skeleton-line long"></div>
-							<div class="skeleton-line"></div>
-							<div class="skeleton-line medium"></div>
-							<div class="skeleton-line long"></div>
-							<div class="skeleton-line short"></div>
-						</div>
-					{:else if narrativePassage}
-						<NarrativePassage passage={narrativePassage} />
-					{/if}
-				</div>
+		<!-- ── Active Traversal ───────────────────────────────────────── -->
+		<section class="traverse-bar">
+			<div class="traverse-bar-inner">
+				<span class="current-node-label">
+					{currentNodeId?.replace(/-/g, ' ') ?? 'Traversing...'}
+				</span>
+				<button class="reset-btn" onclick={resetSession}>New session</button>
+				<button
+					class="observer-toggle"
+					class:active={innerViewOpen}
+					onclick={() => (innerViewOpen = !innerViewOpen)}
+				>
+					<span class="observer-icon">&#x2B21;</span>
+					Observer
+				</button>
 			</div>
+		</section>
 
-			<div class="sidebar">
-				{#if knowledgeSynthesis}
-					<KnowledgeSynthesis text={knowledgeSynthesis} />
+		{#if errorMessage}
+			<div class="error-banner">{errorMessage}</div>
+		{/if}
+
+		<section class="traverse-panel">
+			<!-- Narrative area (left) -->
+			<div class="narrative-area" bind:this={narrativeAreaEl}>
+				{#if playerPath.length > 0}
+					<div class="path-breadcrumb">
+						{playerPath.map(p => p.replace(/-/g, ' ')).join(' \u2192 ')}
+					</div>
 				{/if}
 
-				{#if sessionState === 'active' && choiceCards.length > 0}
-					<ChoiceCards cards={choiceCards} onSelect={handleHop} disabled={loading} />
-				{:else if sessionState === 'terminal'}
-					<SessionSummary
-						{playerPath}
-						totalWords={narrativePassage ? narrativePassage.split(/\s+/).length : 0}
-						nlaStatus={hopData?.nla_agreement?.status ?? null}
-						onNewTraversal={resetSession}
-					/>
-				{:else if loading}
-					<div class="sidebar-skeleton">
-						<div class="skeleton-line"></div>
-						<div class="skeleton-line medium"></div>
-						<div class="skeleton-line long"></div>
+				{#if narrativeHistory.length === 0}
+					<p class="narrative-prompt">Entering the graph...</p>
+				{:else}
+					<div class="narrative-passages">
+						{#each narrativeHistory as passage, i (i)}
+							<p
+								class="narrative-passage"
+								class:narrative-passage--latest={i === narrativeHistory.length - 1}
+								in:fly={{ y: 30, duration: 500, easing: cubicOut }}
+							>
+								{passage}
+							</p>
+						{/each}
+					</div>
+				{/if}
+
+				{#if knowledgeSynthesis}
+					<div class="knowledge-synthesis" in:fade={{ duration: 400, delay: 200 }}>
+						<span class="synthesis-label">Synthesis</span>
+						<p>{knowledgeSynthesis}</p>
 					</div>
 				{/if}
 			</div>
-		</div>
-	{/if}
 
-	<InnerViewPanel open={innerViewOpen} {hopData} onClose={() => (innerViewOpen = false)} />
+			<!-- Choices area (right) -->
+			<div class="choices-area">
+				{#if loading}
+					<h2 class="choices-heading">Where next?</h2>
+					<div class="loading-state" in:fade={{ duration: 300 }}>
+						<div class="spinner"></div>
+						<p>Weaving the path...</p>
+					</div>
+				{:else if isTerminal}
+					<h2 class="choices-heading">Journey complete</h2>
+					<div class="terminal-state" in:fade={{ duration: 400 }}>
+						<p>You have reached the end of this traversal.</p>
+						<p class="terminal-path">
+							{playerPath.length} nodes visited
+						</p>
+						{#if knowledgeSynthesis}
+							<p class="terminal-synthesis">{knowledgeSynthesis}</p>
+						{/if}
+						<button class="enter-btn" onclick={resetSession}>Begin again</button>
+					</div>
+				{:else}
+					<h2 class="choices-heading">Where next?</h2>
+					<div class="choice-cards">
+						{#each choiceCards as card, i (card.destination_node_id)}
+							<button
+								class="choice-card"
+								style="border-left-color: {card.thematic_color};"
+								onclick={() => handleHop(card)}
+								in:fly={{ x: 40, duration: 400, delay: i * 80, easing: cubicOut }}
+							>
+								<p class="choice-text">{card.text}</p>
+								<span class="choice-node">{card.destination_node_id}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<InnerViewPanel open={innerViewOpen} {hopData} onClose={() => (innerViewOpen = false)} />
+	{/if}
 </div>
 
 <style>
@@ -232,7 +284,7 @@
 		overflow: hidden;
 	}
 
-	/* ── Search bar ─────────────────────────────────────────────── */
+	/* ── Search bar (splash mode) ──────────────────────────────────────── */
 	.search-bar {
 		display: flex;
 		align-items: center;
@@ -294,32 +346,6 @@
 	.search-btn:disabled {
 		opacity: 0.5;
 		cursor: wait;
-	}
-
-	.observer-toggle {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 14px;
-		background: #1e293b;
-		border: 1px solid #334155;
-		border-radius: 8px;
-		color: #94a3b8;
-		font-size: 13px;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: all 0.15s;
-	}
-
-	.observer-toggle:hover,
-	.observer-toggle.active {
-		background: #253347;
-		border-color: #6ee7b7;
-		color: #6ee7b7;
-	}
-
-	.observer-icon {
-		font-size: 14px;
 	}
 
 	/* ── Error banner ───────────────────────────────────────────── */
@@ -421,88 +447,284 @@
 		padding: 0 24px 24px;
 	}
 
-	/* ── Active traversal ───────────────────────────────────────── */
-	.traversal-layout {
-		flex: 1;
-		display: grid;
-		grid-template-columns: 1fr 360px;
-		min-height: 0;
-		overflow: hidden;
-	}
-
-	.main-column {
-		display: grid;
-		grid-template-rows: 45% 55%;
-		min-height: 0;
-		overflow: hidden;
-	}
-
-	.graph-area {
-		overflow: hidden;
-		padding: 16px 16px 8px 24px;
-	}
-
-	.narrative-area {
-		overflow-y: auto;
-		padding: 8px 16px 16px 24px;
-	}
-
-	.sidebar {
-		border-left: 1px solid #1e293b;
+	/* ── Traverse bar (active session) ─────────────────────────────── */
+	.traverse-bar {
+		padding: 10px 24px;
+		border-bottom: 1px solid #1e293b;
 		background: #0f172a;
-		overflow-y: auto;
-		padding: 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		flex-shrink: 0;
 	}
 
-	/* ── Skeleton loading ───────────────────────────────────────── */
-	.skeleton {
-		padding: 24px;
-		background: #0f172a;
-		border-radius: 12px;
-		border: 1px solid #1e293b;
+	.traverse-bar-inner {
 		display: flex;
-		flex-direction: column;
+		align-items: center;
 		gap: 12px;
 	}
 
-	.skeleton-line {
-		height: 14px;
-		background: linear-gradient(90deg, #1e293b 25%, #253347 50%, #1e293b 75%);
-		background-size: 200% 100%;
-		border-radius: 4px;
-		animation: shimmer 1.5s infinite;
-		width: 100%;
+	.current-node-label {
+		font-size: 14px;
+		color: #6ee7b7;
+		font-weight: 600;
+		text-transform: capitalize;
+		flex: 1;
 	}
 
-	.skeleton-line.long {
-		width: 92%;
+	.reset-btn {
+		padding: 6px 14px;
+		background: transparent;
+		border: 1px solid #334155;
+		border-radius: 6px;
+		color: #64748b;
+		font-size: 12px;
+		cursor: pointer;
+		transition: all 0.15s;
 	}
 
-	.skeleton-line.medium {
-		width: 70%;
+	.reset-btn:hover {
+		border-color: #6ee7b7;
+		color: #6ee7b7;
 	}
 
-	.skeleton-line.short {
-		width: 45%;
+	.observer-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		background: #1e293b;
+		border: 1px solid #334155;
+		border-radius: 6px;
+		color: #94a3b8;
+		font-size: 12px;
+		cursor: pointer;
+		transition: all 0.15s;
 	}
 
-	@keyframes shimmer {
-		0% {
-			background-position: 200% 0;
+	.observer-toggle:hover,
+	.observer-toggle.active {
+		background: #253347;
+		border-color: #6ee7b7;
+		color: #6ee7b7;
+	}
+
+	.observer-icon {
+		font-size: 13px;
+	}
+
+	/* ── Traverse panel (narrative + choices) ───────────────────────── */
+	.traverse-panel {
+		flex: 1;
+		display: grid;
+		grid-template-columns: 1fr 380px;
+		overflow: hidden;
+	}
+
+	/* ── Narrative area ────────────────────────────────────────────── */
+	.narrative-area {
+		padding: 32px 40px;
+		overflow-y: auto;
+		background: #0f172a;
+		border-right: 1px solid #1e293b;
+	}
+
+	.path-breadcrumb {
+		font-size: 12px;
+		color: #64748b;
+		margin-bottom: 24px;
+		line-height: 1.5;
+		letter-spacing: 0.02em;
+		text-transform: capitalize;
+	}
+
+	.narrative-prompt {
+		color: #475569;
+		font-size: 15px;
+		line-height: 1.7;
+		font-style: italic;
+		margin-top: 40px;
+		text-align: center;
+	}
+
+	.narrative-passages {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.narrative-passage {
+		color: #cbd5e1;
+		font-size: 15px;
+		line-height: 1.8;
+		margin: 0;
+		padding: 16px 20px;
+		background: #111f35;
+		border-radius: 8px;
+		border-left: 3px solid transparent;
+		transition: border-color 0.2s;
+	}
+
+	.narrative-passage--latest {
+		color: #e2e8f0;
+		border-left-color: #6ee7b7;
+		background: #142035;
+	}
+
+	.knowledge-synthesis {
+		margin-top: 32px;
+		padding: 16px 20px;
+		background: #0d1e30;
+		border: 1px solid #1e3a5f;
+		border-radius: 8px;
+	}
+
+	.synthesis-label {
+		font-size: 11px;
+		color: #93c5fd;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		font-weight: 600;
+		display: block;
+		margin-bottom: 8px;
+	}
+
+	.knowledge-synthesis p {
+		color: #94a3b8;
+		font-size: 14px;
+		line-height: 1.6;
+		margin: 0;
+		font-style: italic;
+	}
+
+	/* ── Choices area ──────────────────────────────────────────────── */
+	.choices-area {
+		padding: 28px 24px;
+		background: #0a1628;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.choices-heading {
+		font-size: 15px;
+		font-weight: 700;
+		color: #94a3b8;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		margin: 0;
+	}
+
+	/* ── Loading state ─────────────────────────────────────────────── */
+	.loading-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 16px;
+		padding: 32px 0;
+		color: #64748b;
+		font-size: 14px;
+	}
+
+	.spinner {
+		width: 28px;
+		height: 28px;
+		border: 2px solid #1e293b;
+		border-top-color: #6ee7b7;
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
 		}
-		100% {
-			background-position: -200% 0;
-		}
 	}
 
-	.sidebar-skeleton {
+	/* ── Choice cards ──────────────────────────────────────────────── */
+	.choice-cards {
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding: 8px 0;
 	}
 
+	.choice-card {
+		background: #1e293b;
+		border: 1px solid #334155;
+		border-left: 4px solid #6ee7b7;
+		border-radius: 10px;
+		padding: 16px;
+		cursor: pointer;
+		text-align: left;
+		transition:
+			transform 0.15s ease-out,
+			border-color 0.15s,
+			background 0.15s;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.choice-card:hover {
+		transform: translateY(-2px);
+		background: #253348;
+		border-color: #4b6480;
+	}
+
+	.choice-text {
+		color: #cbd5e1;
+		font-size: 14px;
+		line-height: 1.55;
+		margin: 0;
+	}
+
+	.choice-node {
+		font-size: 11px;
+		color: #64748b;
+		font-family: 'JetBrains Mono', monospace;
+		letter-spacing: 0.02em;
+	}
+
+	/* ── Terminal state ────────────────────────────────────────────── */
+	.terminal-state {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.terminal-state p {
+		color: #64748b;
+		font-size: 14px;
+		line-height: 1.6;
+		margin: 0;
+	}
+
+	.terminal-path {
+		font-size: 13px !important;
+		color: #94a3b8 !important;
+	}
+
+	.terminal-synthesis {
+		color: #94a3b8 !important;
+		font-style: italic;
+		padding: 12px 14px;
+		background: #0d1e30;
+		border-radius: 8px;
+		border-left: 3px solid #93c5fd;
+	}
+
+	.enter-btn {
+		padding: 11px 20px;
+		background: #059669;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.2s;
+		align-self: flex-start;
+	}
+
+	.enter-btn:hover {
+		background: #047857;
+	}
 </style>

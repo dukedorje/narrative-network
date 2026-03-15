@@ -19,7 +19,10 @@
 		</a>
 		<nav>
 			<a href="/" class:active={page.url.pathname === '/'}>Explorer</a>
-			<a href="/traverse" class:active={page.url.pathname === '/traverse'}>Traverse</a>
+			<a href="/traverse" class="traverse-link" class:active={page.url.pathname === '/traverse'}>
+				<span class="traverse-icon">&#x25C8;</span>
+				Traverse
+			</a>
 		</nav>
 	</header>
 
@@ -81,6 +84,31 @@
 	}
 
 	nav a.active {
+		color: #6ee7b7;
+	}
+
+	.traverse-link {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 16px;
+		border: 1px solid #334155;
+		border-radius: 8px;
+		transition: all 0.18s;
+	}
+
+	.traverse-link:hover {
+		border-color: #6ee7b7;
+		background: rgba(110, 231, 183, 0.06);
+	}
+
+	.traverse-link.active {
+		border-color: #6ee7b7;
+		background: rgba(110, 231, 183, 0.1);
+	}
+
+	.traverse-icon {
+		font-size: 14px;
 		color: #6ee7b7;
 	}
 

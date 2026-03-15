@@ -226,7 +226,7 @@
 		<T.Mesh
 			position={[pos.x, pos.y, pos.z]}
 			onclick={() => handleNodeClick(entity)}
-			onpointerdown={(e) => handlePointerDown(entity, e)}
+			onpointerdown={(e: { nativeEvent: PointerEvent }) => handlePointerDown(entity, e)}
 			onpointerenter={() => (hoveredNode = entity.uuid)}
 			onpointerleave={() => {
 				if (hoveredNode === entity.uuid) hoveredNode = null;

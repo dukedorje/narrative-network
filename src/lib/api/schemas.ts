@@ -114,7 +114,7 @@ export const HealthResponse = z.object({
 /** Dev-mode extended health (includes graph_stats, loaded_corpus_nodes) */
 export const DevHealthResponse = HealthResponse.omit({ active_sessions: true, total_sessions: true }).extend({
 	mode: z.literal('dev'),
-	graph_stats: z.record(z.unknown()),
+	graph_stats: z.record(z.string(), z.unknown()),
 	loaded_corpus_nodes: z.array(z.string())
 });
 
@@ -149,7 +149,7 @@ export const BonfireEntity = z.object({
 	node_type: z.literal('entity'),
 	labels: z.array(z.string()),
 	summary: z.string(),
-	attributes: z.record(z.unknown()),
+	attributes: z.record(z.string(), z.unknown()),
 	created_at: z.string()
 });
 
@@ -164,7 +164,7 @@ export const BonfireEdge = z.object({
 	created_at: z.string(),
 	valid_at: z.string().nullable(),
 	expired_at: z.string().nullable(),
-	attributes: z.record(z.unknown())
+	attributes: z.record(z.string(), z.unknown())
 });
 
 export const BonfireEpisode = z.object({
@@ -182,14 +182,14 @@ export const BonfireEpisode = z.object({
 			.array(
 				z.object({
 					description: z.string(),
-					attributes: z.record(z.unknown())
+					attributes: z.record(z.string(), z.unknown())
 				})
 			)
 			.optional()
 	}),
 	valid_at: z.string(),
 	created_at: z.string(),
-	attributes: z.record(z.unknown())
+	attributes: z.record(z.string(), z.unknown())
 });
 
 export const BonfireNode = z.object({
@@ -199,7 +199,7 @@ export const BonfireNode = z.object({
 	bonfire_id: z.string(),
 	labels: z.array(z.string()),
 	summary: z.string(),
-	attributes: z.record(z.unknown()),
+	attributes: z.record(z.string(), z.unknown()),
 	created_at: z.string()
 });
 
