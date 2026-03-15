@@ -47,6 +47,22 @@ score = 0.6 * min(betweenness, 1.0)
 
 Both systems use semantic proximity and retrieval frequency as value signals. Both apply logarithmic dampening to prevent saturation. The mathematical alignment is strong enough that kEngram mass could map directly to our node attestation scores.
 
+### Two Different Kinds of Graph
+
+These systems are **not the same kind of graph**, and the integration design depends on understanding this distinction clearly.
+
+| Property | Narrative Network (KùzuDB) | Bonfires (Neo4j/Graphiti) |
+|----------|---------------------------|--------------------------|
+| Node semantics | Attractor basin (centroid embedding + persona + corpus) | Named entity (person, org, concept) |
+| Edge semantics | Weighted navigability (float + decay + traversal count) | Typed relationship (string label: "operates", "uses") |
+| Graph purpose | Route traversals, compute centrality for emissions | Represent extracted knowledge for retrieval |
+| Evolution model | Reinforcement + decay (continuous, ecological) | Append-only extraction (episodic, geological) |
+| Aliveness metaphor | **Ecological** — birth, competition, death, decay. Unused paths atrophy. | **Geological** — sedimentation, accretion, preservation. Nothing is forgotten. |
+
+The Narrative Network graph at any moment is a *living organism*. The Bonfires projection of it is a *fossil record* — preserving what the organism forgets. The fossil record is valuable precisely because of this difference.
+
+The projection works **only because it is unidirectional**. If anyone tries to reason over the Bonfires projection as if it were the live graph (compute metrics, derive weights, make scoring decisions), the semantic mismatch will produce misleading results.
+
 ---
 
 ## 2. Integration Mental Models
@@ -142,35 +158,61 @@ Request schemas:
 
 ```python
 # Create entity (domain node)
+# Entity name includes miner UID to prevent identity collision on prune-then-reuse.
+# If node "emergent-systems" is pruned and a different miner re-proposes it,
+# Graphiti would otherwise merge the new entity with the dead one's history.
 POST /knowledge_graph/entity
 {
     "bonfire_id": "698b70002849d936f4259848",
-    "entity_name": "emergent-systems",        # our node_id
-    "entity_type": "narrative_domain"          # fixed type for our nodes
+    "entity_name": "emergent-systems:uid42",   # node_id:miner_uid — globally unique
+    "entity_type": "narrative_domain"
 }
 # Response: { "uuid": "...", "entity_name": "...", "entity_type": "..." }
 
-# Create edge
+# Create edge — ALWAYS use fixed relation type, never encode weights in type string
 POST /knowledge_graph/edge
 {
     "bonfire_id": "698b70002849d936f4259848",
     "source_uuid": "<entity_uuid_1>",
     "target_uuid": "<entity_uuid_2>",
-    "relation_type": "TRAVERSAL_LINK"          # or weight-encoded type
+    "relation_type": "TRAVERSAL_LINK"
 }
 
 # Batch add triples (preferred for epoch sync)
+# Use fixed relation type. Weight data goes in episode metadata, not here.
 POST /knowledge_graph/add_triples
 {
     "bonfire_id": "698b70002849d936f4259848",
     "triplets": [
         {
             "entity_from": "emergent-systems",
-            "relation": "LINKS_TO:0.85",       # encode weight in relation
+            "relation": "TRAVERSAL_LINK",
             "entity_to": "complexity-theory"
         },
         ...
     ]
+}
+
+# Edge weights are pushed as a companion epoch-state episode (not in triple relations)
+# This avoids Neo4j schema pollution — encoding weights in relation type strings
+# (e.g., "LINKS_TO:0.85") creates a new relationship type per weight value per sync.
+POST /knowledge_graph/episode/create
+{
+    "bonfire_id": "698b70002849d936f4259848",
+    "agent_id": "<our_sync_agent_id>",
+    "content": {
+        "type": "epoch_edge_state",
+        "epoch": 42,
+        "edges": [
+            {
+                "src": "emergent-systems",
+                "dst": "complexity-theory",
+                "weight": 0.85,
+                "traversal_count": 17,
+                "last_traversed": 1710547200.0
+            }
+        ]
+    }
 }
 
 # Create episode (traversal event)
@@ -318,9 +360,12 @@ New validator
   │
   ├─ 2. Transform from Bonfires format to GraphStore dict:
   │     {
-  │       "nodes": [{ "node_id": entity_name, "domain": entity_type, ... }],
-  │       "edges": [{ "src": source_name, "dst": target_name, "weight": parsed_from_relation, ... }]
+  │       "nodes": [{ "node_id": "emergent-systems", "domain": "...", ... }],
+  │       "edges": [{ "src": "emergent-systems", "dst": "complexity-theory", "weight": 1.0, ... }]
   │     }
+  │     NOTE: All edge weights set to uniform default (1.0).
+  │     Bootstrap provides topology shape only, not state.
+  │     Entity name UID suffix stripped for node_id (e.g., "emergent-systems:uid42" → "emergent-systems").
   │
   ├─ 3. Load via graph_store.load_from_dict(data)
   │
@@ -330,7 +375,15 @@ New validator
       - Graph diverges from Bonfires state immediately
 ```
 
-**Trust boundary:** The bootstrap snapshot is advisory. A new validator must also sync the on-chain metagraph and verify that the Bonfires snapshot is consistent with registered UIDs and committed weights. Any discrepancy → trust the chain.
+**Trust boundary — CRITICAL:** The bootstrap snapshot is advisory, not authoritative. Bonfires is a centralized, trusted platform — a compromised or manipulated Bonfires instance could feed a new validator a poisoned initial graph with manipulated edge weights and centrality scores that still looks consistent with on-chain UIDs.
+
+New validators MUST:
+1. Verify the Bonfires snapshot against the on-chain metagraph (UIDs, registered nodes). Any discrepancy → trust the chain.
+2. **Use bootstrap only for topology shape** — which nodes exist and roughly how they connect. This is safe because topology is verifiable against on-chain UID registrations.
+3. **Never use bootstrapped edge weights for emission calculations.** Set all bootstrapped edge weights to a uniform default (e.g., `1.0`) and re-derive weights from local scoring within the first N epochs.
+4. **Re-derive betweenness centrality locally** after the first scoring epoch rather than trusting bootstrapped centrality values.
+
+The bootstrap accelerates discovery of graph structure. It does NOT accelerate trust in graph state.
 
 ### 5.3 Sync Frequency
 
@@ -350,12 +403,28 @@ New validator
 
 | KùzuDB (our schema) | Bonfires (Neo4j/Graphiti) | Notes |
 |---------------------|--------------------------|-------|
-| `Node` | Entity node | `node_id` → entity name, `domain` → entity type |
-| `Edge` | Relationship | `weight` → relationship strength, `traversal_count` → retrieval_count |
+| `Node` | Entity node | `node_id:uid` → entity name (UID suffix prevents prune-reuse collision), `domain` → entity type |
+| `Edge` | `TRAVERSAL_LINK` relationship + epoch-state episode | Relationship captures topology; episode captures weight/traversal/decay state |
 | `TraversalEvent` | Episode | `session_id` → episode ID, `path` → episode content |
-| Attestation scores | Relationship metadata | Per-miner scores become edge properties |
-| Betweenness centrality | Entity metadata | Computed metric stored as entity property |
+| Attestation scores | Episode metadata | Per-miner scores embedded in episode content |
+| Betweenness centrality | Entity metadata | Computed metric stored as entity property; label with epoch timestamp for staleness |
 | Node state (incubating/live/warning/pruning) | Entity label | Maps to Bonfires taxonomy |
+
+### Node Identity: Prune-then-Reuse Collision
+
+Graphiti deduplicates entities by name on ingest. If a node is pruned from the subnet and a different miner later re-proposes the same `node_id`, Graphiti would merge the new entity with the dead one's history — inheriting wrong provenance.
+
+**Mitigation:** Entity names include the miner UID suffix (`emergent-systems:uid42`). Different miners registering the same domain concept create distinct Bonfires entities. When a node is pruned, the sync agent pushes a lifecycle episode marking it as pruned (no entity deletion needed — the fossil record is valuable).
+
+### Edge Weights: Topology vs. State
+
+Bonfires edges are typed relationships (categorical strings). Our edges carry continuous-valued state (weight, traversal count, decay). These are fundamentally different representations.
+
+**Resolution:** Split the sync into two layers:
+1. **Topology** (`TRAVERSAL_LINK` relationships via `add_triples`) — captures *which* nodes connect. Fixed relation type, no weight encoding. Graphiti dedup handles this cleanly.
+2. **State** (epoch-state episodes via `episode/create`) — captures *how strong* connections are at a point in time. JSON content with edge weights, traversal counts, centrality scores, timestamps.
+
+This separation means the Bonfires graph structure reflects topology (which is relatively stable), while episodes capture the time-varying dynamics (which change every epoch). Community tools query episodes for current state; the graph structure shows navigability.
 
 ### kEngram ↔ Attestation Record
 
@@ -457,25 +526,50 @@ This mapping means every scored hop in the Narrative Network can be expressed as
 1. **Rate limits** — What are the rate limits on `add_triples` and `episode/create`? We'll push ~1 batch per epoch (every few minutes).
 2. **Bulk export** — Can we get a full graph snapshot (all entities + edges) in a single call? Current approach requires N+1 calls (batch entities + expand each).
 3. **Self-hosted timeline** — When does the Knowledge Network support self-hosted Bonfires?
-4. **Entity deduplication** — Graphiti deduplicates on ingest. What's the matching strategy? Name-exact, embedding-similarity, or configurable?
-5. **Edge weight encoding** — Relations are typed strings. What's the recommended pattern for encoding numeric weights? (e.g., `LINKS_TO:0.85` vs. separate metadata field)
-6. **Attestation UID format** — Can attestation UIDs reference EAS attestations from Alkahest? What's the expected format?
-7. **$KNOW ↔ TAO** — As Knowledge Network launches, is cross-chain bridge planned?
-8. **Webhook/events** — Does Bonfires support outbound webhooks when entities/episodes are created? Would enable Bonfires → subnet event propagation.
+4. **Entity deduplication strategy** — Graphiti deduplicates on ingest. Is matching by name-exact, embedding-similarity, or configurable? We use `node_id:uid` entity names to prevent prune-reuse collision — will Graphiti treat `emergent-systems:uid42` and `emergent-systems:uid99` as distinct entities?
+5. **Attestation UID format** — Can attestation UIDs reference EAS attestations from Alkahest? What's the expected format?
+6. **$KNOW ↔ TAO** — As Knowledge Network launches, is cross-chain bridge planned?
+7. **Webhook/events** — Does Bonfires support outbound webhooks when entities/episodes are created?
+8. **Episode query by type** — Can we filter episodes by content type (e.g., `type: "epoch_edge_state"` vs `type: "traversal_event"`)? This affects how community tools retrieve current-state snapshots vs historical traversals.
 
 ---
 
-## 9. Risk Assessment
+## 9. Confluence and Divergence Analysis
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Rate limits unknown | Medium | Test early in Phase 0; design batch-friendly sync (one call per epoch) |
-| Bonfires centralized — single point of failure | Medium | Sync is optional and non-blocking; validator scoring never depends on Bonfires |
-| No bulk export endpoint | Medium | Build iterative bootstrap (entities/batch + expand); request bulk export from team |
-| Knowledge Network not yet live | Low | Phase 1-3 work with hosted Bonfire; self-hosted is Phase 4 |
-| Neo4j ↔ KùzuDB schema mismatch | Low | Both support Cypher; translation layer is mechanical |
-| Genesis NFT cost (0.1 ETH) | Low | One-time; self-hosted path eliminates this later |
-| Graphiti dedup strategy may not match our semantics | Medium | Test entity creation early; confirm matching behavior with team |
+### Where the Systems Align Naturally
+
+| Dimension | Alignment | Integration value |
+|-----------|-----------|-------------------|
+| **Scoring math** | Both use `log1p` dampening, retrieval frequency, semantic proximity | Attestation scores as kEngram metadata enriches Bonfires with a quality dimension it lacks natively |
+| **Episode ↔ TraversalEvent** | Both are timestamped event records with structured content | Direct mapping via `episode/create`; use distinct sync agent to separate machine data from organic conversation |
+| **Multi-validator dedup** | Graphiti merges duplicate entities by name | Solves the N-validators-pushing-same-data problem for free |
+| **Complementary value signals** | Attestation = "how well served" (relative); Gravitational mass = "how much it matters" (absolute) | Orthogonal signals that compose rather than compete |
+
+### Where the Systems Diverge
+
+| Dimension | Tension | Resolution |
+|-----------|---------|------------|
+| **Edge semantics** | Continuous float weights vs. categorical typed strings | Split into topology (relationships) + state (episodes). Permanent gap — accept it. |
+| **Temporal dynamics** | Decay/reinforcement vs. append-only persistence | Bonfires accumulates a time-smeared view. Label all data with epoch timestamps; consumer tools must filter by recency. |
+| **Node identity** | Attractor basins (embedding-defined) vs. named entities (string-defined) | Lossy projection. UID-suffixed names prevent collision. Do not build systems that round-trip entity identity. |
+| **Trust model** | Trustless (independent validators + Subtensor) vs. trusted (centralized platform) | Unidirectional flow. Bootstrap uses topology only, not weights. Validators re-derive all state locally. |
+| **Graph "aliveness"** | Ecological (things die) vs. geological (nothing forgotten) | Complementary, not conflicting. The fossil record preserves what the organism forgets. |
+
+---
+
+## 10. Risk Assessment
+
+| Risk | Severity | Mitigation | Status |
+|------|----------|------------|--------|
+| Rate limits unknown | Medium | Test in Phase 0; batch-friendly sync (one call per epoch) | Open |
+| Bonfires centralized — SPOF | Medium | Sync is optional, non-blocking; scoring never depends on Bonfires | Accepted |
+| No bulk export endpoint | Medium | Iterative bootstrap (entities/batch + expand); request bulk export | Open |
+| Bootstrap trust gap | Medium | Bootstrap topology only; uniform default weights; re-derive locally within N epochs | **Mitigated** |
+| Edge weight schema pollution | High → Fixed | Use fixed `TRAVERSAL_LINK` relation type; weights in epoch-state episodes | **Fixed** |
+| Prune-then-reuse identity collision | Medium → Fixed | UID-suffixed entity names (`node_id:uid`); lifecycle episodes on prune | **Fixed** |
+| Graphiti dedup may not match semantics | Medium | Test UID-suffixed names in Phase 0; confirm distinct treatment | Open |
+| Temporal smearing (no decay in Bonfires) | Low | Label all data with epoch timestamps; document for consumer tools | Accepted |
+| Knowledge Network not yet live | Low | Phase 1-3 with hosted Bonfire; self-hosted is Phase 4 | Accepted |
 
 ---
 
