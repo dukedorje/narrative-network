@@ -12,6 +12,8 @@ COPY subnet/ subnet/
 COPY domain/ domain/
 COPY orchestrator/ orchestrator/
 COPY evolution/ evolution/
+COPY seed/ seed/
+COPY docs/corpora/ docs/corpora/
 
 RUN pip install --no-cache-dir .
 
