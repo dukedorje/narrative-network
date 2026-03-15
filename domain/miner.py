@@ -16,6 +16,7 @@ from subnet import NETUID
 from subnet.config import (
     EMBEDDING_MODEL,
     SubnetConfig,
+    UNBROWSE_CORPUS_THRESHOLD,
 )
 from subnet.protocol import KnowledgeQuery
 from domain.corpus import Chunk, CorpusLoader, MerkleProver, compute_corpus_root_hash
@@ -49,6 +50,9 @@ class DomainMiner:
 
         if corpus_dir:
             self._load_corpus(corpus_dir)
+
+        from orchestrator.unbrowse import UnbrowseClient
+        self._unbrowse = UnbrowseClient()
 
         self.axon = bt.Axon(wallet=self.wallet, config=self.config)
         self.axon.attach(
@@ -138,6 +142,38 @@ class DomainMiner:
 
         synapse.node_id = self.node_id
         synapse.agent_uid = self.uid
+
+        # If domain similarity is below threshold, enrich chunks with Unbrowse context
+        if (
+            synapse.query_text
+            and synapse.query_text != "__corpus_challenge__"
+            and (synapse.domain_similarity or 0.0) < UNBROWSE_CORPUS_THRESHOLD
+        ):
+            unbrowse_results = await self._unbrowse.fetch_context(
+                query=synapse.query_text,
+                node_id=self.node_id,
+                max_results=2,
+            )
+            if unbrowse_results:
+                if synapse.chunks is None:
+                    synapse.chunks = []
+                for r in unbrowse_results:
+                    synapse.chunks.append({
+                        "id": f"unbrowse:{r.url or 'web'}",
+                        "text": r.content[:800],
+                        "hash": "",
+                        "score": r.confidence,
+                        "char_start": 0,
+                        "char_end": len(r.content),
+                        "source": "unbrowse",
+                    })
+                log.info(
+                    "Unbrowse fallback: added %d external chunks for node %s (sim=%.3f)",
+                    len(unbrowse_results),
+                    self.node_id,
+                    synapse.domain_similarity,
+                )
+
         return synapse
 
     async def _blacklist(self, synapse: KnowledgeQuery) -> tuple[bool, str]:

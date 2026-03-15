@@ -109,6 +109,20 @@ INTEGRATION_BLOCKS: int = int(_env("INTEGRATION_BLOCKS", 600))    # ~2 h
 INTEGRATION_MIN_SCORE: float = float(_env("INTEGRATION_MIN_SCORE", 0.50))
 
 # ---------------------------------------------------------------------------
+# Natural Language Agreements (Arkhai Alkahest)
+# ---------------------------------------------------------------------------
+NLA_ENDPOINT: str = str(_env("NLA_ENDPOINT", "https://api.arkhai.io/nla"))
+NLA_CHAIN: str = str(_env("NLA_CHAIN", "base"))
+
+# ---------------------------------------------------------------------------
+# Unbrowse.ai (external web context layer)
+# ---------------------------------------------------------------------------
+UNBROWSE_API_URL: str = str(_env("UNBROWSE_API_URL", "https://api.unbrowse.ai"))
+UNBROWSE_TIMEOUT_S: float = float(_env("UNBROWSE_TIMEOUT_S", 8.0))
+# Corpus similarity score below this triggers Unbrowse external context fetch
+UNBROWSE_CORPUS_THRESHOLD: float = float(_env("UNBROWSE_CORPUS_THRESHOLD", 0.35))
+
+# ---------------------------------------------------------------------------
 # Emission pool shares (must sum to 1.0)
 # ---------------------------------------------------------------------------
 EMISSION_TRAVERSAL_SHARE: float = float(_env("EMISSION_TRAVERSAL_SHARE", 0.50))
@@ -186,6 +200,15 @@ class SubnetConfig:
     drift_max_cosine_distance: float = DRIFT_MAX_COSINE_DISTANCE
     integration_blocks: int = INTEGRATION_BLOCKS
     integration_min_score: float = INTEGRATION_MIN_SCORE
+
+    # Natural Language Agreements
+    nla_endpoint: str = NLA_ENDPOINT
+    nla_chain: str = NLA_CHAIN
+
+    # Unbrowse
+    unbrowse_api_url: str = UNBROWSE_API_URL
+    unbrowse_timeout_s: float = UNBROWSE_TIMEOUT_S
+    unbrowse_corpus_threshold: float = UNBROWSE_CORPUS_THRESHOLD
 
     # Emission pool shares
     emission_traversal_share: float = EMISSION_TRAVERSAL_SHARE

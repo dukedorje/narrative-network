@@ -27,6 +27,9 @@ class MinimalNarrativeMiner:
         # _generate is patched per-test via AsyncMock on the instance
         self._generate = None
         self._update_session = AsyncMock()
+        # Unbrowse stub — no API key means no-op
+        from orchestrator.unbrowse import UnbrowseClient
+        self._unbrowse = UnbrowseClient(api_key="")
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,9 @@ class MinimalDomainMiner:
         self.centroid = [1.0] + [0.0] * 767
         self.node_id = node_id
         self.uid = uid
+        # Unbrowse stub — no API key means no-op
+        from orchestrator.unbrowse import UnbrowseClient
+        self._unbrowse = UnbrowseClient(api_key="")
 
 
 # ---------------------------------------------------------------------------

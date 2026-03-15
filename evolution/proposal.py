@@ -16,7 +16,8 @@ from enum import Enum
 
 import bittensor as bt
 
-from subnet.config import PROPOSAL_MIN_BOND_TAO
+from subnet.config import PROPOSAL_MIN_BOND_TAO, VOTING_OPEN_BLOCKS
+from evolution.nla_settlement import NLAgreement, NLASettlementClient
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class NodeProposal:
     submitted_block: int = 0
     status: ProposalStatus = ProposalStatus.DRAFT
     proposal_id: str = ""
+    nla_agreement: NLAgreement | None = None
 
     # ------------------------------------------------------------------
     # Identity helpers
@@ -125,6 +127,7 @@ class ProposalSubmitter:
         self.subtensor = subtensor
         self.netuid = netuid
         self.min_bond_tao = min_bond_tao
+        self._nla_client = NLASettlementClient()
 
     # ------------------------------------------------------------------
     # Public API
@@ -212,6 +215,10 @@ class ProposalSubmitter:
 
         TODO: Implement actual on-chain bond locking via extrinsic once
         Bittensor exposes a proposal-bond pallet. Currently a no-op stub.
+
+        Builds a draft NLA agreement that captures the bond escrow terms in
+        natural language. The draft is stored on the proposal; async registration
+        with the Arkhai NLA service happens in VotingEngine.register_proposal.
         """
         log.info(
             "Bond locked: %.4f TAO from %s for proposal %s",
@@ -219,6 +226,15 @@ class ProposalSubmitter:
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
+        proposal.nla_agreement = self._nla_client.build_proposal_agreement(
+            proposal_id=proposal.proposal_id,
+            proposer_hotkey=proposal.proposer_hotkey,
+            node_id=proposal.node_id,
+            proposal_type=proposal.proposal_type.value,
+            bond_tao=proposal.bond_tao,
+            voting_deadline_block=proposal.submitted_block + VOTING_OPEN_BLOCKS,
+        )
+        log.info("NLA draft prepared for proposal %s", proposal.proposal_id)
 
     def _commit_on_chain(self, proposal: NodeProposal, commitment: str) -> None:
         """Store commitment hash on-chain via commit_weights mechanism.

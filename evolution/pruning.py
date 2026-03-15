@@ -7,11 +7,13 @@ Collapsed nodes are removed from the live graph.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
+from evolution.nla_settlement import NLASettlementClient
 from subnet.config import (
     PRUNING_MIN_TRAVERSALS,
 )
@@ -117,6 +119,8 @@ class PruneState:
         epochs_in_phase: Consecutive epochs in current phase.
         window: Rolling score window.
         last_epoch: Last epoch this state was updated.
+        proposer_hotkey: SS58 hotkey of the node's original proposer (for NLA settlement).
+        bond_tao: Bond amount locked by the proposer (for NLA settlement).
     """
 
     node_id: str
@@ -124,6 +128,8 @@ class PruneState:
     epochs_in_phase: int = 0
     window: ScoreWindow = field(default_factory=ScoreWindow)
     last_epoch: int = 0
+    proposer_hotkey: str = ""
+    bond_tao: float = 0.0
 
 
 @dataclass
@@ -175,16 +181,28 @@ class PruningEngine:
         # node_id -> PruneState
         self._states: dict[str, PruneState] = {}
 
+        self._nla_client = NLASettlementClient()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def register_node(self, node_id: str) -> None:
-        """Register a new node for pruning tracking."""
+    def register_node(self, node_id: str, proposer_hotkey: str = "", bond_tao: float = 0.0) -> None:
+        """Register a new node for pruning tracking.
+
+        Args:
+            node_id: Node identifier.
+            proposer_hotkey: SS58 hotkey of the original proposer (used for NLA settlement
+                             on collapse). Pass empty string if not applicable.
+            bond_tao: Bond amount locked by the proposer (used for NLA settlement on
+                      collapse). Pass 0.0 if not applicable.
+        """
         if node_id not in self._states:
             self._states[node_id] = PruneState(
                 node_id=node_id,
                 window=ScoreWindow(max_size=self.window_size),
+                proposer_hotkey=proposer_hotkey,
+                bond_tao=bond_tao,
             )
 
     def push_scores(self, epoch: int, scores: dict[str, EpochScore]) -> None:
@@ -302,9 +320,36 @@ class PruningEngine:
             reason,
             mean,
         )
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._settle_collapse_nla(state, epoch, reason))
+        except RuntimeError:
+            log.warning("No event loop — skipping NLA collapse settlement for %s", state.node_id)
         return CollapsePassage(
             node_id=state.node_id,
             epoch=epoch,
             final_mean_score=mean,
             reason=reason,
+        )
+
+    async def _settle_collapse_nla(
+        self, state: PruneState, epoch: int, reason: str
+    ) -> None:
+        """Settle NLA bond burn on node collapse."""
+        if not state.proposer_hotkey:
+            return
+        agreement = self._nla_client.build_collapse_agreement(
+            node_id=state.node_id,
+            proposer_hotkey=state.proposer_hotkey,
+            bond_tao=state.bond_tao,
+            epoch=epoch,
+            reason=reason,
+        )
+        await self._nla_client.register(agreement)
+        await self._nla_client.settle(
+            agreement=agreement,
+            action="burn",
+            proposal_id=agreement.proposal_id,
+            bond_tao=state.bond_tao,
+            proposer_hotkey=state.proposer_hotkey,
         )

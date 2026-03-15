@@ -140,6 +140,33 @@ Everything is recorded as **attestations on EAS**, providing a transparent, veri
 - Agentic RAG
 - Cybernetic Agents
 
-## Relevance to Narrative Network
+## NLA Integration in Narrative Network
 
-Alkahest could serve as the settlement and agreement layer for narrative-related exchanges — enabling peer-to-peer agreements around content, compute, or information with programmable arbitration and on-chain attestation trails.
+The `evolution/nla_settlement.py` module integrates Natural Language Agreements (NLA) from [`arkhai-io/natural-language-agreements`](https://github.com/arkhai-io/natural-language-agreements) as the settlement layer for all governance bond operations.
+
+### Where NLA is used
+
+| Component | Event | NLA Action |
+|-----------|-------|------------|
+| `evolution/proposal.py` | `ProposalSubmitter.submit` | Draft NLA created with bond escrow terms |
+| `evolution/voting.py` | `VotingEngine.register_proposal` | NLA registered on-chain (escrow UID recorded) |
+| `evolution/voting.py` | `BondReturn.return_bond` | NLA settled: bond returned to proposer |
+| `evolution/voting.py` | `BondReturn.burn_bond` | NLA settled: bond burned to treasury |
+| `evolution/integration.py` | `IntegrationManager._go_live` | NLA settled: bond returned on successful LIVE |
+| `evolution/pruning.py` | `PruningEngine._collapse` | NLA settled: bond burned on node collapse |
+
+### Agreement types
+
+1. **Proposal Bond Agreement** — Locks TAO bond at proposal submission; released on ACCEPTED vote or burned on REJECTED.
+2. **Integration Bond Return** — Triggered when a node completes the RAMP phase and reaches LIVE status.
+3. **Collapse Penalty Agreement** — Triggered by PruningEngine when a node hits the consecutive DECAYING threshold.
+
+### Configuration
+
+```
+NLA_API_KEY=<your_key>         # Arkhai NLA service API key
+AXON_NLA_ENDPOINT=https://...  # Override default Arkhai endpoint
+AXON_NLA_CHAIN=base            # EVM chain for Alkahest contracts (default: base)
+```
+
+All NLA calls are non-blocking — failures log a warning and the Bittensor proposal flow continues. This ensures Subnet 42 governance is never blocked by EVM infrastructure availability.

@@ -15,11 +15,14 @@ Live: The node is fully integrated; the proposal's bond is returned.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
 from evolution.proposal import NodeProposal, ProposalStatus
+from evolution.nla_settlement import NLASettlementClient
+from orchestrator.unbrowse import UnbrowseClient
 from subnet.config import INCUBATION_BLOCKS, INTEGRATION_BLOCKS, INTEGRATION_MIN_SCORE
 
 log = logging.getLogger(__name__)
@@ -130,6 +133,9 @@ class IntegrationManager:
         # proposal_id -> NodeProposal
         self._proposals: dict[str, NodeProposal] = {}
 
+        self._nla_client = NLASettlementClient()
+        self._unbrowse = UnbrowseClient()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -179,6 +185,20 @@ class IntegrationManager:
             bridge_block,
         )
         proposal.status = ProposalStatus.INTEGRATING
+
+        # Fire-and-forget: pre-fetch external web context for the new node
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._prefetch_node_context(
+                    node_id=proposal.node_id,
+                    domain=proposal.metadata.get("domain", proposal.node_id),
+                    metadata=proposal.metadata,
+                )
+            )
+        except RuntimeError:
+            log.debug("No event loop — skipping Unbrowse prefetch for %s", proposal.node_id)
+
         return notice
 
     def process_epoch(
@@ -266,3 +286,43 @@ class IntegrationManager:
         )
         if proposal is not None:
             proposal.status = ProposalStatus.LIVE
+            # Settle NLA bond return on successful integration
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._settle_live_bond(proposal, current_block))
+            except RuntimeError:
+                log.warning("No event loop — skipping NLA settlement for proposal %s", pid)
+
+    async def _prefetch_node_context(self, node_id: str, domain: str, metadata: dict) -> None:
+        """Pre-fetch external web context for a new node during foreshadowing."""
+        enrichment = await self._unbrowse.fetch_node_enrichment(
+            node_id=node_id,
+            domain=domain,
+            metadata=metadata,
+        )
+        if enrichment:
+            log.info(
+                "Unbrowse prefetch for node %s: %d chars of external context",
+                node_id,
+                len(enrichment),
+            )
+        else:
+            log.debug("Unbrowse prefetch returned no context for node %s", node_id)
+
+    async def _settle_live_bond(self, proposal: "NodeProposal", live_block: int) -> None:
+        """Settle NLA bond return when a node goes LIVE."""
+        agreement = self._nla_client.build_integration_agreement(
+            proposal_id=proposal.proposal_id,
+            node_id=proposal.node_id,
+            proposer_hotkey=proposal.proposer_hotkey,
+            bond_tao=proposal.bond_tao,
+            live_block=live_block,
+        )
+        await self._nla_client.register(agreement)
+        await self._nla_client.settle(
+            agreement=agreement,
+            action="return",
+            proposal_id=proposal.proposal_id,
+            bond_tao=proposal.bond_tao,
+            proposer_hotkey=proposal.proposer_hotkey,
+        )
