@@ -278,9 +278,87 @@ class Validator:
 
 
 # ------------------------------------------------------------------
+# Local dev validator — no Bittensor registration required
+# ------------------------------------------------------------------
+
+
+class LocalValidator:
+    """Validator that runs against the local seed topology without Bittensor."""
+
+    def __init__(self) -> None:
+        import logging
+
+        self.log = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO)
+
+        self.log.info("Loading seed topology for local validator...")
+        from seed.loader import load_topology
+        from subnet.graph_store import GraphStore
+
+        self.graph_store, self.corpus_map = load_topology()
+        self.step = 0
+
+        node_ids = self.graph_store.get_live_node_ids()
+        self.log.info(
+            "Local validator ready: %d nodes, scoring with mock heuristics",
+            len(node_ids),
+        )
+
+    def run_epoch(self) -> None:
+        """Score all nodes using mock heuristics, decay edges, log results."""
+        import time
+
+        from orchestrator.mock_scoring import mock_scores
+
+        node_ids = self.graph_store.get_live_node_ids()
+        epoch_scores: dict[str, dict[str, float]] = {}
+
+        for node_id in node_ids:
+            scores = mock_scores(
+                chunk_scores=[0.5],  # placeholder
+                passage_text="mock passage for scoring epoch",
+                node_id=node_id,
+                graph_store=self.graph_store,
+            )
+            epoch_scores[node_id] = scores
+
+        # Decay edges
+        self.graph_store.decay_edges()
+
+        # Log results
+        self.log.info(
+            "Epoch %d: scored %d nodes, edges decayed",
+            self.step, len(node_ids),
+        )
+        for node_id, scores in epoch_scores.items():
+            self.log.info(
+                "  %s: trav=%.3f qual=%.3f topo=%.3f corp=%.3f",
+                node_id, scores["traversal"], scores["quality"],
+                scores["topology"], scores["corpus"],
+            )
+        self.step += 1
+
+    def run_forever(self) -> None:
+        import time
+
+        self.log.info("Local validator starting epoch loop (every %ds)", EPOCH_SLEEP_S)
+        while True:
+            try:
+                self.run_epoch()
+            except Exception as e:
+                self.log.error("Epoch failed: %s", e)
+            time.sleep(EPOCH_SLEEP_S)
+
+
+# ------------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    validator = Validator()
+    import os
+
+    if os.environ.get("AXON_NETWORK") == "local":
+        validator = LocalValidator()
+    else:
+        validator = Validator()
     validator.run_forever()

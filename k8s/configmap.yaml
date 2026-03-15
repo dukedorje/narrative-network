@@ -8,7 +8,7 @@ metadata:
 data:
   # Bittensor
   AXON_NETUID: "42"
-  AXON_NETWORK: "finney"
+  AXON_NETWORK: "local"
 
   # Embedding
   AXON_EMBEDDING_MODEL: "sentence-transformers/all-mpnet-base-v2"

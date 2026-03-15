@@ -30,31 +30,13 @@ spec:
                 name: narrative-network-config
             - secretRef:
                 name: narrative-network-secrets
-          volumeMounts:
-            - name: bt-coldkey
-              mountPath: /root/.bittensor/wallets/default/coldkey
-              subPath: coldkey
-              readOnly: true
-            - name: bt-coldkey
-              mountPath: /root/.bittensor/wallets/default/coldkeypub.txt
-              subPath: coldkeypub.txt
-              readOnly: true
-            - name: bt-hotkey
-              mountPath: /root/.bittensor/wallets/default/hotkeys/default
-              subPath: hotkey
-              readOnly: true
-            - name: bt-hotkey
-              mountPath: /root/.bittensor/wallets/default/hotkeys/defaultpub.txt
-              subPath: hotkeypub.txt
-              readOnly: true
-          # No GPU needed — uses OpenRouter for LLM inference
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "64Mi"
+              cpu: "50m"
             limits:
-              memory: "256Mi"
-              cpu: "500m"
+              memory: "128Mi"
+              cpu: "200m"
           livenessProbe:
             httpGet:
               path: /healthz
@@ -68,13 +50,6 @@ spec:
               port: axon
             initialDelaySeconds: 5
             periodSeconds: 10
-      volumes:
-        - name: bt-coldkey
-          secret:
-            secretName: bt-wallet-coldkey
-        - name: bt-hotkey
-          secret:
-            secretName: bt-wallet-narrative-miner
       terminationGracePeriodSeconds: 30
 ---
 apiVersion: v1

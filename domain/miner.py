@@ -5,21 +5,19 @@ One instance per registered node ID. Handles KnowledgeQuery synapses.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 
 import bittensor as bt
 import numpy as np
 
+from domain.corpus import Chunk, CorpusLoader, MerkleProver
 from subnet import NETUID
 from subnet.config import (
     EMBEDDING_MODEL,
-    SubnetConfig,
     UNBROWSE_CORPUS_THRESHOLD,
 )
 from subnet.protocol import KnowledgeQuery
-from domain.corpus import Chunk, CorpusLoader, MerkleProver, compute_corpus_root_hash
 
 log = logging.getLogger(__name__)
 
@@ -228,6 +226,65 @@ class DomainMiner:
         return self.merkle_prover.prove(chunk_index)
 
 
+class LocalDomainMiner:
+    """Domain miner stub for local/demo mode.
+
+    In local mode, the gateway runs corpus retrieval in-process via _LocalMinerPool.
+    This stub keeps the K8s pod alive and healthy.
+    """
+
+    def __init__(self) -> None:
+        self.log = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO)
+
+        self.log.info("Domain miner starting in local/demo mode")
+        self.log.info("Corpus retrieval is handled by the gateway's in-process miner pool")
+
+        # Verify seed topology is accessible
+        from seed.loader import load_topology
+
+        graph_store, corpus_map = load_topology()
+        total_chunks = sum(len(files) for files in corpus_map.values())
+        self.log.info(
+            "Seed topology verified: %d nodes, %d corpus files",
+            graph_store.stats()["node_count"],
+            total_chunks,
+        )
+
+    def run_forever(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok","mode":"local"}')
+
+            def log_message(self, format, *args):  # noqa: A002
+                pass  # Suppress request logs
+
+        # Start health server in background thread
+        server = HTTPServer(("0.0.0.0", 8091), HealthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.log.info("Health server listening on :8091")
+
+        self.log.info("Local domain miner idle — gateway handles all corpus retrieval")
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            server.shutdown()
+            self.log.info("Local domain miner stopped")
+
+
 if __name__ == "__main__":
-    miner = DomainMiner()
+    import os
+
+    if os.environ.get("AXON_NETWORK") == "local":
+        miner: DomainMiner | LocalDomainMiner = LocalDomainMiner()
+    else:
+        miner = DomainMiner()
     miner.run_forever()

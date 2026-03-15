@@ -14,17 +14,16 @@ import time
 
 import bittensor as bt
 
+from domain.narrative.prompt import build_prompt, fits_in_context
+from domain.narrative.session_store import SessionStore
 from subnet import NETUID
 from subnet.config import (
     NARRATIVE_MAX_TOKENS,
     NARRATIVE_MODEL,
     NARRATIVE_TEMPERATURE,
     OPENROUTER_BASE_URL,
-    SubnetConfig,
 )
-from subnet.protocol import NarrativeHop, ChoiceCard
-from domain.narrative.prompt import build_prompt, fits_in_context
-from domain.narrative.session_store import SessionStore
+from subnet.protocol import ChoiceCard, NarrativeHop
 
 log = logging.getLogger(__name__)
 
@@ -251,6 +250,56 @@ class NarrativeMiner:
             self.stop()
 
 
+class LocalNarrativeMiner:
+    """Narrative miner stub for local/demo mode.
+
+    In local mode, the gateway runs narrative generation in-process.
+    This stub keeps the K8s pod alive and healthy.
+    """
+
+    def __init__(self) -> None:
+        self.log = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO)
+
+        self.log.info("Narrative miner starting in local/demo mode")
+        self.log.info("Narrative generation is handled by the gateway's in-process generator")
+
+        if not _OPENROUTER_API_KEY:
+            self.log.warning("OPENROUTER_API_KEY not set — gateway generation will use placeholder")
+        else:
+            self.log.info("OpenRouter API key configured")
+
+    def run_forever(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok","mode":"local"}')
+
+            def log_message(self, format, *args):
+                pass  # Suppress request logs
+
+        server = HTTPServer(("0.0.0.0", 8092), HealthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.log.info("Health server listening on :8092")
+
+        self.log.info("Local narrative miner idle — gateway handles all generation")
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            server.shutdown()
+            self.log.info("Local narrative miner stopped")
+
+
 if __name__ == "__main__":
-    miner = NarrativeMiner()
+    if os.environ.get("AXON_NETWORK") == "local":
+        miner = LocalNarrativeMiner()
+    else:
+        miner = NarrativeMiner()
     miner.run_forever()

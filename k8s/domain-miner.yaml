@@ -30,36 +30,13 @@ spec:
                 name: narrative-network-config
             - secretRef:
                 name: narrative-network-secrets
-          env:
-            - name: CORPUS_PATH
-              value: /corpus
-          volumeMounts:
-            - name: corpus-data
-              mountPath: /corpus
-            - name: bt-coldkey
-              mountPath: /root/.bittensor/wallets/default/coldkey
-              subPath: coldkey
-              readOnly: true
-            - name: bt-coldkey
-              mountPath: /root/.bittensor/wallets/default/coldkeypub.txt
-              subPath: coldkeypub.txt
-              readOnly: true
-            - name: bt-hotkey
-              mountPath: /root/.bittensor/wallets/default/hotkeys/default
-              subPath: hotkey
-              readOnly: true
-            - name: bt-hotkey
-              mountPath: /root/.bittensor/wallets/default/hotkeys/defaultpub.txt
-              subPath: hotkeypub.txt
-              readOnly: true
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "64Mi"
+              cpu: "50m"
             limits:
-              # Embedding model kept in memory
-              memory: "1Gi"
-              cpu: "1000m"
+              memory: "128Mi"
+              cpu: "200m"
           livenessProbe:
             httpGet:
               path: /healthz
@@ -73,28 +50,7 @@ spec:
               port: axon
             initialDelaySeconds: 15
             periodSeconds: 15
-      volumes:
-        - name: corpus-data
-          persistentVolumeClaim:
-            claimName: domain-miner-corpus
-        - name: bt-coldkey
-          secret:
-            secretName: bt-wallet-coldkey
-        - name: bt-hotkey
-          secret:
-            secretName: bt-wallet-domain-miner
       terminationGracePeriodSeconds: 30
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: domain-miner-corpus
-  namespace: narrative-network
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 10Gi
 ---
 apiVersion: v1
 kind: Service
