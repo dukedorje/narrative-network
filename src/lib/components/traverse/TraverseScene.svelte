@@ -11,7 +11,11 @@
 		currentNodeId: string | null;
 	}
 
-	let { nodes = [], edges = [], playerPath = [], currentNodeId = null }: Props = $props();
+	let { nodes: rawNodes = [], edges: rawEdges = [], playerPath = [], currentNodeId = null }: Props = $props();
+
+	// Ensure arrays even if gateway returns wrapped objects
+	let nodes = $derived(Array.isArray(rawNodes) ? rawNodes : []);
+	let edges = $derived(Array.isArray(rawEdges) ? rawEdges : []);
 
 	interactivity();
 
@@ -93,10 +97,12 @@
 		}
 		settling = active;
 
-		// Snapshot positions
+		// Snapshot positions (skip NaN nodes)
 		const positions = new Map<string, { x: number; y: number; z: number }>();
 		for (const [id, node] of layout.nodes) {
-			positions.set(id, { x: node.x, y: node.y, z: node.z });
+			if (isFinite(node.x) && isFinite(node.y) && isFinite(node.z)) {
+				positions.set(id, { x: node.x, y: node.y, z: node.z });
+			}
 		}
 		nodePositions = positions;
 
@@ -107,6 +113,8 @@
 			const a = layout.nodes.get(link.source);
 			const b = layout.nodes.get(link.target);
 			if (!a || !b) continue;
+			if (!isFinite(a.x) || !isFinite(a.y) || !isFinite(a.z)) continue;
+			if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.z)) continue;
 			const arr = isPathEdge(link.source, link.target) ? pathPts : regularPts;
 			arr.push(a.x, a.y, a.z, b.x, b.y, b.z);
 		}

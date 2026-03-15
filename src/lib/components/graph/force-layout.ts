@@ -206,6 +206,20 @@ export class ForceLayout {
 
 		// --- Integrate ---
 		for (const node of nodes) {
+			// Clamp velocities to prevent explosion
+			const maxV = 10;
+			node.vx = Math.max(-maxV, Math.min(maxV, node.vx));
+			node.vy = Math.max(-maxV, Math.min(maxV, node.vy));
+			node.vz = Math.max(-maxV, Math.min(maxV, node.vz));
+
+			// NaN recovery — reset to origin with jitter
+			if (!isFinite(node.vx)) node.vx = 0;
+			if (!isFinite(node.vy)) node.vy = 0;
+			if (!isFinite(node.vz)) node.vz = 0;
+			if (!isFinite(node.x)) node.x = (Math.random() - 0.5) * 2;
+			if (!isFinite(node.y)) node.y = (Math.random() - 0.5) * 2;
+			if (!isFinite(node.z)) node.z = (Math.random() - 0.5) * 2;
+
 			if (node.fx !== null) {
 				node.x = node.fx;
 				node.vx = 0;
