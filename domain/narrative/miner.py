@@ -70,6 +70,9 @@ class NarrativeMiner:
 
         self._client = None  # lazy-init AsyncOpenAI
 
+        from orchestrator.unbrowse import UnbrowseClient
+        self._unbrowse = UnbrowseClient()
+
         self.axon = bt.Axon(wallet=self.wallet, config=self.config)
         self.axon.attach(
             forward_fn=self._forward,
@@ -138,11 +141,25 @@ class NarrativeMiner:
     # ------------------------------------------------------------------
 
     async def _forward(self, synapse: NarrativeHop) -> NarrativeHop:
+        # Enrich hop generation with live external context not in the graph
+        unbrowse_context = ""
+        if synapse.query_text:
+            unbrowse_results = await self._unbrowse.fetch_context(
+                query=synapse.query_text or synapse.destination_node_id,
+                node_id=synapse.destination_node_id,
+                max_results=2,
+            )
+            unbrowse_context = self._unbrowse.format_for_prompt(unbrowse_results)
+
+        augmented_chunks = list(synapse.retrieved_chunks or [])
+        if unbrowse_context:
+            augmented_chunks.append({"text": unbrowse_context, "id": "unbrowse:live", "score": 0.5})
+
         system_prompt, user_prompt = build_prompt(
             destination_node_id=synapse.destination_node_id,
             player_path=synapse.player_path,
             prior_narrative=synapse.prior_narrative,
-            retrieved_chunks=synapse.retrieved_chunks,
+            retrieved_chunks=augmented_chunks,
             persona=self.persona,
             num_choices=3,
         )

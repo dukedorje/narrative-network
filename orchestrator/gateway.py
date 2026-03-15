@@ -135,6 +135,8 @@ def create_app(
             top_k=req.top_k_entry,
         )
         if not ranked_nodes:
+            # TODO: unbrowse_fallback_enter — if no ranked_nodes, use UnbrowseClient.fetch_context
+            # to synthesize entry context and return a virtual node response
             raise HTTPException(status_code=503, detail="No entry nodes resolved")
 
         entry_node_id = ranked_nodes[0]

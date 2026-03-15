@@ -15,6 +15,7 @@ from enum import Enum
 import bittensor as bt
 
 from evolution.proposal import NodeProposal, ProposalStatus
+from evolution.nla_settlement import NLASettlementClient, NLAgreement
 from subnet.config import (
     VOTING_OPEN_BLOCKS,
     VOTING_QUORUM_RATIO,
@@ -91,30 +92,59 @@ class BondReturn:
 
     def __init__(self, subtensor: bt.Subtensor) -> None:
         self.subtensor = subtensor
+        self.nla_client = NLASettlementClient()
 
-    def return_bond(self, proposal: NodeProposal) -> None:
-        """Transfer bond back to the proposer's hotkey.
-
-        TODO: Implement actual extrinsic once bond pallet is available.
-        """
+    async def return_bond(self, proposal: NodeProposal) -> None:
+        """Return bond via NLA settlement (Alkahest escrow release)."""
         log.info(
             "Returning %.4f TAO bond to %s for proposal %s",
             proposal.bond_tao,
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
+        agreement = proposal.nla_agreement
+        if agreement is None:
+            agreement = self.nla_client.build_proposal_agreement(
+                proposal_id=proposal.proposal_id,
+                proposer_hotkey=proposal.proposer_hotkey,
+                node_id=proposal.node_id,
+                proposal_type=proposal.proposal_type.value,
+                bond_tao=proposal.bond_tao,
+                voting_deadline_block=0,
+            )
+        await self.nla_client.settle(
+            agreement=agreement,
+            action="return",
+            proposal_id=proposal.proposal_id,
+            bond_tao=proposal.bond_tao,
+            proposer_hotkey=proposal.proposer_hotkey,
+        )
         proposal.status = ProposalStatus.BOND_RETURNED
 
-    def burn_bond(self, proposal: NodeProposal) -> None:
-        """Burn bond on rejection (send to zero address / treasury).
-
-        TODO: Implement actual extrinsic once bond pallet is available.
-        """
+    async def burn_bond(self, proposal: NodeProposal) -> None:
+        """Burn bond via NLA settlement (Alkahest escrow burn to treasury)."""
         log.warning(
             "Burning %.4f TAO bond from %s for rejected proposal %s",
             proposal.bond_tao,
             proposal.proposer_hotkey,
             proposal.proposal_id,
+        )
+        agreement = proposal.nla_agreement
+        if agreement is None:
+            agreement = self.nla_client.build_proposal_agreement(
+                proposal_id=proposal.proposal_id,
+                proposer_hotkey=proposal.proposer_hotkey,
+                node_id=proposal.node_id,
+                proposal_type=proposal.proposal_type.value,
+                bond_tao=proposal.bond_tao,
+                voting_deadline_block=0,
+            )
+        await self.nla_client.settle(
+            agreement=agreement,
+            action="burn",
+            proposal_id=proposal.proposal_id,
+            bond_tao=proposal.bond_tao,
+            proposer_hotkey=proposal.proposer_hotkey,
         )
 
 
@@ -166,6 +196,11 @@ class VotingEngine:
         self._votes.setdefault(proposal.proposal_id, [])
         proposal.status = ProposalStatus.VOTING
         log.info("Proposal %s registered for voting", proposal.proposal_id)
+
+        # Register NLA agreement on-chain when voting opens
+        if proposal.nla_agreement is not None and proposal.nla_agreement.status == "draft":
+            import asyncio
+            asyncio.ensure_future(self._register_nla(proposal))
 
     def cast_vote(
         self,
@@ -269,6 +304,12 @@ class VotingEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _register_nla(self, proposal: NodeProposal) -> None:
+        """Register the draft NLA agreement with the Arkhai service."""
+        client = NLASettlementClient()
+        if proposal.nla_agreement is not None:
+            await client.register(proposal.nla_agreement)
 
     def _check_window_open(self, proposal: NodeProposal, current_block: int) -> None:
         window_end = proposal.submitted_block + self.voting_open_blocks
