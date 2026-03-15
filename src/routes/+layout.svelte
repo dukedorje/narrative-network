@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { page } from '$app/state';
 
 	let { children } = $props();
 </script>
@@ -17,7 +18,8 @@
 			<span class="logo-text">Narrative Network</span>
 		</a>
 		<nav>
-			<a href="/">Explorer</a>
+			<a href="/" class:active={page.url.pathname === '/'}>Explorer</a>
+			<a href="/traverse" class:active={page.url.pathname === '/traverse'}>Traverse</a>
 		</nav>
 	</header>
 
@@ -63,6 +65,11 @@
 		letter-spacing: -0.02em;
 	}
 
+	nav {
+		display: flex;
+		gap: 16px;
+	}
+
 	nav a {
 		color: #94a3b8;
 		text-decoration: none;
@@ -71,6 +78,10 @@
 
 	nav a:hover {
 		color: #e2e8f0;
+	}
+
+	nav a.active {
+		color: #6ee7b7;
 	}
 
 	main {

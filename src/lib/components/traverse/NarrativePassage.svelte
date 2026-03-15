@@ -6,7 +6,7 @@
 	let { passage }: Props = $props();
 </script>
 
-<div class="narrative-passage" key={passage}>
+<div class="narrative-passage">
 	<p class="passage-text">{passage}</p>
 </div>
 

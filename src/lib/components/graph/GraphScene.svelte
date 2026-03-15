@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { T, useTask } from '@threlte/core';
+	import { T, useTask, useThrelte } from '@threlte/core';
 	import { OrbitControls, HTML, interactivity } from '@threlte/extras';
-	import { BufferGeometry, Float32BufferAttribute, Color, Vector3 } from 'three';
-	import { ForceLayout, type LayoutNode } from './force-layout';
+	import { BufferGeometry, Float32BufferAttribute, Plane, Raycaster, Vector2, Vector3 } from 'three';
+	import { ForceLayout } from './force-layout';
 
 	interface Entity {
 		uuid: string;
@@ -126,7 +126,60 @@
 		edgeGeometry = geo;
 	}
 
+	// --- Drag interaction ---
+	const { camera, renderer } = useThrelte();
+	let dragId = $state<string | null>(null);
+	const dragPlane = new Plane();
+	const raycaster = new Raycaster();
+	const pointer = new Vector2();
+	const intersection = new Vector3();
+
+	function handlePointerDown(entity: Entity, event: { nativeEvent: PointerEvent }) {
+		const pos = nodePositions.get(entity.uuid);
+		if (!pos) return;
+		// Set drag plane perpendicular to camera, passing through node
+		const nodePos = new Vector3(pos.x, pos.y, pos.z);
+		const camDir = new Vector3();
+		camera.current.getWorldDirection(camDir);
+		dragPlane.setFromNormalAndCoplanarPoint(camDir, nodePos);
+		dragId = entity.uuid;
+		layout.pin(entity.uuid, pos.x, pos.y, pos.z);
+		layout.reheat(0.3);
+	}
+
+	function handlePointerMove(event: PointerEvent) {
+		if (!dragId) return;
+		const rect = renderer.domElement.getBoundingClientRect();
+		pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+		pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+		raycaster.setFromCamera(pointer, camera.current);
+		if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
+			layout.pin(dragId, intersection.x, intersection.y, intersection.z);
+		}
+	}
+
+	function handlePointerUp() {
+		if (dragId) {
+			layout.unpin(dragId);
+			layout.reheat(0.3);
+			dragId = null;
+		}
+	}
+
+	// Attach window-level listeners for drag continuation outside mesh
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+		return () => {
+			window.removeEventListener('pointermove', handlePointerMove);
+			window.removeEventListener('pointerup', handlePointerUp);
+		};
+	});
+
 	function handleNodeClick(entity: Entity) {
+		// Only fire click if we weren't dragging
+		if (dragId) return;
 		onNodeClick?.(entity.uuid, entity.name);
 	}
 
@@ -169,6 +222,7 @@
 		<T.Mesh
 			position={[pos.x, pos.y, pos.z]}
 			onclick={() => handleNodeClick(entity)}
+			onpointerdown={(e) => handlePointerDown(entity, e)}
 			onpointerenter={() => (hoveredNode = entity.uuid)}
 			onpointerleave={() => {
 				if (hoveredNode === entity.uuid) hoveredNode = null;
