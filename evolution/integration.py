@@ -311,18 +311,21 @@ class IntegrationManager:
 
     async def _settle_live_bond(self, proposal: "NodeProposal", live_block: int) -> None:
         """Settle NLA bond return when a node goes LIVE."""
-        agreement = self._nla_client.build_integration_agreement(
-            proposal_id=proposal.proposal_id,
-            node_id=proposal.node_id,
-            proposer_hotkey=proposal.proposer_hotkey,
-            bond_tao=proposal.bond_tao,
-            live_block=live_block,
-        )
-        await self._nla_client.register(agreement)
-        await self._nla_client.settle(
-            agreement=agreement,
-            action="return",
-            proposal_id=proposal.proposal_id,
-            bond_tao=proposal.bond_tao,
-            proposer_hotkey=proposal.proposer_hotkey,
-        )
+        try:
+            agreement = self._nla_client.build_integration_agreement(
+                proposal_id=proposal.proposal_id,
+                node_id=proposal.node_id,
+                proposer_hotkey=proposal.proposer_hotkey,
+                bond_tao=proposal.bond_tao,
+                live_block=live_block,
+            )
+            await self._nla_client.register(agreement)
+            await self._nla_client.settle(
+                agreement=agreement,
+                action="return",
+                proposal_id=proposal.proposal_id,
+                bond_tao=proposal.bond_tao,
+                proposer_hotkey=proposal.proposer_hotkey,
+            )
+        except Exception as exc:
+            log.warning("NLA settlement failed for proposal %s (non-blocking): %s", proposal.proposal_id, exc)

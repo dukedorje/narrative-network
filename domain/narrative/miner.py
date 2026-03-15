@@ -283,10 +283,10 @@ class LocalNarrativeMiner:
             def log_message(self, format, *args):
                 pass  # Suppress request logs
 
-        server = HTTPServer(("0.0.0.0", 8092), HealthHandler)
+        server = HTTPServer(("0.0.0.0", 8093), HealthHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        self.log.info("Health server listening on :8092")
+        self.log.info("Health server listening on :8093")
 
         self.log.info("Local narrative miner idle — gateway handles all generation")
         try:

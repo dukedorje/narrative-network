@@ -338,18 +338,21 @@ class PruningEngine:
         """Settle NLA bond burn on node collapse."""
         if not state.proposer_hotkey:
             return
-        agreement = self._nla_client.build_collapse_agreement(
-            node_id=state.node_id,
-            proposer_hotkey=state.proposer_hotkey,
-            bond_tao=state.bond_tao,
-            epoch=epoch,
-            reason=reason,
-        )
-        await self._nla_client.register(agreement)
-        await self._nla_client.settle(
-            agreement=agreement,
-            action="burn",
-            proposal_id=agreement.proposal_id,
-            bond_tao=state.bond_tao,
-            proposer_hotkey=state.proposer_hotkey,
-        )
+        try:
+            agreement = self._nla_client.build_collapse_agreement(
+                node_id=state.node_id,
+                proposer_hotkey=state.proposer_hotkey,
+                bond_tao=state.bond_tao,
+                epoch=epoch,
+                reason=reason,
+            )
+            await self._nla_client.register(agreement)
+            await self._nla_client.settle(
+                agreement=agreement,
+                action="burn",
+                proposal_id=agreement.proposal_id,
+                bond_tao=state.bond_tao,
+                proposer_hotkey=state.proposer_hotkey,
+            )
+        except Exception as exc:
+            log.warning("NLA collapse settlement failed for %s (non-blocking): %s", state.node_id, exc)

@@ -65,16 +65,14 @@ spec:
               memory: "1Gi"
               cpu: "1000m"
           livenessProbe:
-            httpGet:
-              path: /api/v0/version
-              port: api
+            exec:
+              command: ["ipfs", "version"]
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /api/v0/version
-              port: api
+            exec:
+              command: ["ipfs", "version"]
             initialDelaySeconds: 10
             periodSeconds: 15
       terminationGracePeriodSeconds: 60

@@ -316,9 +316,12 @@ class VotingEngine:
 
     async def _register_nla(self, proposal: NodeProposal) -> None:
         """Register the draft NLA agreement with the Arkhai service."""
-        if proposal.nla_agreement is not None:
-            client = NLASettlementClient()
-            await client.register(proposal.nla_agreement)
+        try:
+            if proposal.nla_agreement is not None:
+                client = NLASettlementClient()
+                await client.register(proposal.nla_agreement)
+        except Exception as exc:
+            log.warning("NLA registration failed for %s (non-blocking): %s", proposal.proposal_id, exc)
 
     def _check_window_open(self, proposal: NodeProposal, current_block: int) -> None:
         window_end = proposal.submitted_block + self.voting_open_blocks
