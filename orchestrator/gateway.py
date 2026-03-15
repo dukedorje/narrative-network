@@ -11,11 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from subnet import NETUID
-from subnet.graph_store import GraphStore
+from subnet.graph_store import Edge, GraphStore, Node
 from subnet.protocol import NodeID, SessionID
 
-from subnet.graph_store import Edge, GraphStore, Node
-
+from orchestrator.arbiter import TraversalArbiter
 from orchestrator.embedder import Embedder
 from orchestrator.router import Router
 from orchestrator.safety_guard import PathSafetyGuard
@@ -205,6 +204,7 @@ def create_app(
 
     # In-memory session registry: session_id -> OrchestratorSession
     _sessions: dict[SessionID, OrchestratorSession] = {}
+    _arbiter = TraversalArbiter()
 
     dendrite = bt.Dendrite(wallet=wallet)
 
@@ -310,6 +310,29 @@ def create_app(
             destination_node_id=req.destination_node_id,
             axon=axon,
         )
+
+        # Run Arkhai arbiter to filter the next-hop candidate set
+        raw_cards: list[dict] = result.get("choice_cards") or []
+        if raw_cards:
+            candidates = [c["destination_node_id"] for c in raw_cards]
+            node_descriptions = {
+                nid: (graph_store.get_node(nid).metadata.get("description", nid)
+                      if graph_store.get_node(nid) else nid)
+                for nid in candidates + [req.destination_node_id]
+            }
+            arbiter_result = await _arbiter.check_hop(
+                session_id=req.session_id,
+                source_node=session.player_path[-2] if len(session.player_path) > 1 else req.destination_node_id,
+                dest_node=req.destination_node_id,
+                player_path=list(session.player_path),
+                candidates=candidates,
+                node_descriptions=node_descriptions,
+            )
+            approved_ids = set(arbiter_result.filtered_candidates)
+            filtered_cards = [c for c in raw_cards if c["destination_node_id"] in approved_ids]
+            result["choice_cards"] = filtered_cards or raw_cards  # never return empty if fallback
+            if arbiter_result.reasoning and not result.get("knowledge_synthesis"):
+                result["knowledge_synthesis"] = arbiter_result.reasoning
 
         return HopResponse(
             session_id=result["session_id"],
@@ -425,91 +448,10 @@ def create_dev_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    _sessions: dict[SessionID, dict[str, Any]] = {}
+    _arbiter = TraversalArbiter()
+
     _register_graph_endpoints(app, graph_store)
-
-    # ------------------------------------------------------------------
-    # Dev stubs for /enter and /hop (no Bittensor miners needed)
-    # ------------------------------------------------------------------
-
-    import uuid as _uuid
-
-    _dev_sessions: dict[str, dict] = {}
-
-    def _dev_choice_cards(node_id: str) -> list[dict]:
-        colours = ["#6ee7b7", "#93c5fd", "#fbbf24", "#f472b6", "#a78bfa"]
-        neighbours = graph_store.neighbours(node_id)
-        cards = []
-        for i, dest in enumerate(neighbours[:4]):
-            dest_node = graph_store.get_node(dest)
-            desc = (dest_node.metadata.get("description", dest) if dest_node else dest)[:80]
-            cards.append({
-                "text": desc,
-                "destination_node_id": dest,
-                "edge_weight_delta": 0.0,
-                "thematic_color": colours[i % len(colours)],
-            })
-        return cards
-
-    def _dev_narrative(node_id: str, query: str = "") -> str:
-        node = graph_store.get_node(node_id)
-        desc = node.metadata.get("description", node_id) if node else node_id
-        name = node_id.replace("-", " ").title()
-        context = f' Your query "{query}" led here.' if query else ""
-        return (
-            f"You arrive at {name}.{context} "
-            f"{desc} "
-            f"The edges of this domain shimmer with connections to neighbouring realms of knowledge."
-        )
-
-    @app.post("/enter", response_model=None)
-    async def dev_enter(req: EnterRequest) -> dict:
-        live_ids = graph_store.get_live_node_ids()
-        if not live_ids:
-            raise HTTPException(status_code=503, detail="Graph is empty")
-        q = req.query_text.lower()
-        entry = next(
-            (nid for nid in live_ids if q in nid or q in (
-                (graph_store.get_node(nid) or type("", (), {"metadata": {}})()).metadata.get("description", "").lower()  # type: ignore[union-attr]
-            )),
-            live_ids[0],
-        )
-        session_id = str(_uuid.uuid4())
-        cards = _dev_choice_cards(entry)
-        _dev_sessions[session_id] = {
-            "session_id": session_id,
-            "current_node_id": entry,
-            "player_path": [entry],
-            "state": "active",
-        }
-        return {
-            "session_id": session_id,
-            "current_node_id": entry,
-            "narrative_passage": _dev_narrative(entry, req.query_text),
-            "choice_cards": cards,
-            "knowledge_synthesis": None,
-            "player_path": [entry],
-            "state": "active",
-        }
-
-    @app.post("/hop", response_model=None)
-    async def dev_hop(req: HopRequest) -> dict:
-        session = _dev_sessions.get(req.session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        dest = req.destination_node_id
-        session["player_path"].append(dest)
-        session["current_node_id"] = dest
-        cards = _dev_choice_cards(dest)
-        return {
-            "session_id": req.session_id,
-            "current_node_id": dest,
-            "narrative_passage": _dev_narrative(dest),
-            "choice_cards": cards,
-            "knowledge_synthesis": None,
-            "player_path": list(session["player_path"]),
-            "state": "active",
-            "error": None,
-        }
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -523,6 +465,161 @@ def create_dev_app() -> FastAPI:
     @app.get("/graph/stats")
     async def graph_stats() -> dict:
         return graph_store.stats()
+
+    @app.post("/enter", response_model=EnterResponse)
+    async def enter(req: EnterRequest) -> dict[str, Any]:
+        # Embed the query
+        query_embedding = embedder.embed_one(req.query_text)
+
+        # Rank entry nodes by centroid similarity
+        ranked = miner_pool.rank_entry_nodes(query_embedding, top_k=req.top_k_entry)
+        if not ranked:
+            raise HTTPException(status_code=503, detail="No nodes with loaded corpus")
+
+        entry_node_id, similarity = ranked[0]
+
+        # Retrieve chunks from entry node
+        chunks = miner_pool.retrieve_chunks(entry_node_id, query_embedding, top_k=5)
+
+        # Get adjacent nodes for choice cards
+        adjacent = safety_guard.filter_candidates(
+            graph_store.neighbours(entry_node_id), [entry_node_id]
+        )
+
+        # Generate opening narrative
+        result = await narrator.generate_hop(
+            destination_node_id=entry_node_id,
+            player_path=[],
+            prior_narrative="",
+            retrieved_chunks=chunks,
+            adjacent_nodes=adjacent,
+        )
+
+        # Build choice cards from LLM response, filtering to valid adjacent nodes
+        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+
+        import uuid
+
+        session_id = str(uuid.uuid4())
+        _sessions[session_id] = {
+            "session_id": session_id,
+            "state": "active",
+            "current_node_id": entry_node_id,
+            "player_path": [entry_node_id],
+            "prior_narrative": result.get("narrative_passage", ""),
+            "query_embedding": query_embedding,
+        }
+
+        return {
+            "session_id": session_id,
+            "current_node_id": entry_node_id,
+            "narrative_passage": result.get("narrative_passage"),
+            "choice_cards": choice_cards,
+            "knowledge_synthesis": result.get("knowledge_synthesis"),
+            "player_path": [entry_node_id],
+            "state": "active",
+        }
+
+    @app.post("/hop", response_model=HopResponse)
+    async def hop(req: HopRequest) -> dict[str, Any]:
+        session = _sessions.get(req.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session["state"] != "active":
+            raise HTTPException(status_code=400, detail=f"Session is {session['state']}")
+
+        player_path = session["player_path"]
+
+        # Safety checks
+        ok, reason = safety_guard.check_path_length(player_path)
+        if not ok:
+            session["state"] = "terminal"
+            raise HTTPException(status_code=400, detail=reason)
+
+        safe = safety_guard.filter_candidates([req.destination_node_id], player_path)
+        if not safe:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Node {req.destination_node_id} already visited or blocked",
+            )
+
+        # Retrieve chunks from destination node
+        query_embedding = session["query_embedding"]
+        chunks = miner_pool.retrieve_chunks(req.destination_node_id, query_embedding, top_k=5)
+
+        # Get adjacent nodes (excluding already visited)
+        new_path = player_path + [req.destination_node_id]
+        adjacent = safety_guard.filter_candidates(
+            graph_store.neighbours(req.destination_node_id), new_path
+        )
+
+        # Check for terminal state (no adjacent nodes left)
+        if not adjacent:
+            session["state"] = "terminal"
+
+        # Generate narrative hop
+        result = await narrator.generate_hop(
+            destination_node_id=req.destination_node_id,
+            player_path=player_path,
+            prior_narrative=session["prior_narrative"],
+            retrieved_chunks=chunks,
+            adjacent_nodes=adjacent if adjacent else ["(terminal)"],
+        )
+
+        raw_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+
+        # Arkhai arbiter filters candidates to meaningful forward steps
+        if raw_cards:
+            node_descriptions = {
+                nid: (graph_store.get_node(nid).metadata.get("description", nid)
+                      if graph_store.get_node(nid) else nid)
+                for nid in adjacent + [req.destination_node_id]
+            }
+            arbiter_result = await _arbiter.check_hop(
+                session_id=req.session_id,
+                source_node=player_path[-1] if player_path else req.destination_node_id,
+                dest_node=req.destination_node_id,
+                player_path=player_path,
+                candidates=[c["destination_node_id"] for c in raw_cards],
+                node_descriptions=node_descriptions,
+            )
+            approved = set(arbiter_result.filtered_candidates)
+            choice_cards = [c for c in raw_cards if c["destination_node_id"] in approved] or raw_cards
+        else:
+            choice_cards = raw_cards
+
+        # Update session
+        passage = result.get("narrative_passage", "")
+        session["player_path"] = new_path
+        session["current_node_id"] = req.destination_node_id
+        session["prior_narrative"] = (
+            session["prior_narrative"] + "\n\n" + passage
+        ).strip()
+
+        if not adjacent:
+            session["state"] = "terminal"
+
+        return {
+            "session_id": req.session_id,
+            "current_node_id": req.destination_node_id,
+            "narrative_passage": passage,
+            "choice_cards": choice_cards,
+            "knowledge_synthesis": result.get("knowledge_synthesis"),
+            "player_path": new_path,
+            "state": session["state"],
+        }
+
+    @app.get("/session/{session_id}")
+    async def get_session(session_id: str) -> dict[str, Any]:
+        session = _sessions.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {
+            "session_id": session["session_id"],
+            "state": session["state"],
+            "current_node_id": session["current_node_id"],
+            "player_path": session["player_path"],
+        }
 
     return app
 
