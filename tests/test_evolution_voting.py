@@ -228,7 +228,7 @@ class TestProcessEpoch:
 
 
 # ---------------------------------------------------------------------------
-# BondReturn — async NLA stubs
+# BondReturn — sync with background NLA settlement
 # ---------------------------------------------------------------------------
 
 
@@ -237,23 +237,23 @@ class TestBondReturn:
     def bond_return(self, subtensor):
         return BondReturn(subtensor=subtensor)
 
-    async def test_return_bond_sets_bond_returned_status(self, bond_return):
+    def test_return_bond_sets_bond_returned_status(self, bond_return):
         p = _make_proposal()
         p.proposal_id = "br1"
         p.nla_agreement = NLAgreement(agreement_text="test", proposal_id="br1")
-        await bond_return.return_bond(p)
+        bond_return.return_bond(p)
         assert p.status == ProposalStatus.BOND_RETURNED
 
-    async def test_burn_bond_does_not_raise(self, bond_return):
+    def test_burn_bond_does_not_raise(self, bond_return):
         p = _make_proposal()
         p.proposal_id = "br2"
         p.nla_agreement = NLAgreement(agreement_text="test", proposal_id="br2")
-        await bond_return.burn_bond(p)  # should not raise
+        bond_return.burn_bond(p)  # should not raise
 
-    async def test_return_bond_without_agreement_creates_one(self, bond_return):
+    def test_return_bond_without_agreement_creates_one(self, bond_return):
         """BondReturn should handle missing nla_agreement gracefully."""
         p = _make_proposal()
         p.proposal_id = "br3"
         p.nla_agreement = None
-        await bond_return.return_bond(p)
+        bond_return.return_bond(p)
         assert p.status == ProposalStatus.BOND_RETURNED

@@ -8,6 +8,7 @@ bond burn; accepted proposals enter integration.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -88,47 +89,52 @@ class TallyResult:
 # ---------------------------------------------------------------------------
 
 class BondReturn:
-    """Handles returning bonds to proposers on accepted or expired proposals."""
+    """Handles returning bonds to proposers on accepted or expired proposals.
+
+    Both return_bond and burn_bond are sync-safe: they update proposal status
+    immediately and schedule NLA settlement as a background task if an event
+    loop is available. Callers do not need to await.
+    """
 
     def __init__(self, subtensor: bt.Subtensor) -> None:
         self.subtensor = subtensor
         self.nla_client = NLASettlementClient()
 
-    async def return_bond(self, proposal: NodeProposal) -> None:
-        """Return bond via NLA settlement (Alkahest escrow release)."""
+    def return_bond(self, proposal: NodeProposal) -> None:
+        """Return bond to proposer. Schedules NLA settlement in background."""
         log.info(
             "Returning %.4f TAO bond to %s for proposal %s",
             proposal.bond_tao,
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
-        agreement = proposal.nla_agreement
-        if agreement is None:
-            agreement = self.nla_client.build_proposal_agreement(
-                proposal_id=proposal.proposal_id,
-                proposer_hotkey=proposal.proposer_hotkey,
-                node_id=proposal.node_id,
-                proposal_type=proposal.proposal_type.value,
-                bond_tao=proposal.bond_tao,
-                voting_deadline_block=0,
-            )
-        await self.nla_client.settle(
-            agreement=agreement,
-            action="return",
-            proposal_id=proposal.proposal_id,
-            bond_tao=proposal.bond_tao,
-            proposer_hotkey=proposal.proposer_hotkey,
-        )
         proposal.status = ProposalStatus.BOND_RETURNED
+        self._schedule_settlement(proposal, action="return")
 
-    async def burn_bond(self, proposal: NodeProposal) -> None:
-        """Burn bond via NLA settlement (Alkahest escrow burn to treasury)."""
+    def burn_bond(self, proposal: NodeProposal) -> None:
+        """Burn bond on rejection. Schedules NLA settlement in background."""
         log.warning(
             "Burning %.4f TAO bond from %s for rejected proposal %s",
             proposal.bond_tao,
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
+        self._schedule_settlement(proposal, action="burn")
+
+    def _schedule_settlement(self, proposal: NodeProposal, action: str) -> None:
+        """Schedule async NLA settlement if an event loop is running."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._settle_nla(proposal, action))
+        except RuntimeError:
+            log.debug(
+                "No event loop — NLA settlement for %s deferred (action=%s)",
+                proposal.proposal_id,
+                action,
+            )
+
+    async def _settle_nla(self, proposal: NodeProposal, action: str) -> None:
+        """Execute NLA settlement via Alkahest escrow."""
         agreement = proposal.nla_agreement
         if agreement is None:
             agreement = self.nla_client.build_proposal_agreement(
@@ -141,7 +147,7 @@ class BondReturn:
             )
         await self.nla_client.settle(
             agreement=agreement,
-            action="burn",
+            action=action,
             proposal_id=proposal.proposal_id,
             bond_tao=proposal.bond_tao,
             proposer_hotkey=proposal.proposer_hotkey,
@@ -199,8 +205,11 @@ class VotingEngine:
 
         # Register NLA agreement on-chain when voting opens
         if proposal.nla_agreement is not None and proposal.nla_agreement.status == "draft":
-            import asyncio
-            asyncio.ensure_future(self._register_nla(proposal))
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._register_nla(proposal))
+            except RuntimeError:
+                log.debug("No event loop — deferring NLA registration for %s", proposal.proposal_id)
 
     def cast_vote(
         self,
@@ -307,8 +316,8 @@ class VotingEngine:
 
     async def _register_nla(self, proposal: NodeProposal) -> None:
         """Register the draft NLA agreement with the Arkhai service."""
-        client = NLASettlementClient()
         if proposal.nla_agreement is not None:
+            client = NLASettlementClient()
             await client.register(proposal.nla_agreement)
 
     def _check_window_open(self, proposal: NodeProposal, current_block: int) -> None:

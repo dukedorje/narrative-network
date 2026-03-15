@@ -15,6 +15,7 @@ Live: The node is fully integrated; the proposal's bond is returned.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -186,14 +187,17 @@ class IntegrationManager:
         proposal.status = ProposalStatus.INTEGRATING
 
         # Fire-and-forget: pre-fetch external web context for the new node
-        import asyncio
-        asyncio.ensure_future(
-            self._prefetch_node_context(
-                node_id=proposal.node_id,
-                domain=proposal.metadata.get("domain", proposal.node_id),
-                metadata=proposal.metadata,
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._prefetch_node_context(
+                    node_id=proposal.node_id,
+                    domain=proposal.metadata.get("domain", proposal.node_id),
+                    metadata=proposal.metadata,
+                )
             )
-        )
+        except RuntimeError:
+            log.debug("No event loop — skipping Unbrowse prefetch for %s", proposal.node_id)
 
         return notice
 
@@ -283,10 +287,11 @@ class IntegrationManager:
         if proposal is not None:
             proposal.status = ProposalStatus.LIVE
             # Settle NLA bond return on successful integration
-            import asyncio
-            asyncio.ensure_future(
-                self._settle_live_bond(proposal, current_block)
-            )
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._settle_live_bond(proposal, current_block))
+            except RuntimeError:
+                log.warning("No event loop — skipping NLA settlement for proposal %s", pid)
 
     async def _prefetch_node_context(self, node_id: str, domain: str, metadata: dict) -> None:
         """Pre-fetch external web context for a new node during foreshadowing."""

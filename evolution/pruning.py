@@ -7,6 +7,7 @@ Collapsed nodes are removed from the live graph.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -319,10 +320,11 @@ class PruningEngine:
             reason,
             mean,
         )
-        import asyncio
-        asyncio.ensure_future(
-            self._settle_collapse_nla(state, epoch, reason)
-        )
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._settle_collapse_nla(state, epoch, reason))
+        except RuntimeError:
+            log.warning("No event loop — skipping NLA collapse settlement for %s", state.node_id)
         return CollapsePassage(
             node_id=state.node_id,
             epoch=epoch,

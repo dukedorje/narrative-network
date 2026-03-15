@@ -143,9 +143,9 @@ class NarrativeMiner:
     async def _forward(self, synapse: NarrativeHop) -> NarrativeHop:
         # Enrich hop generation with live external context not in the graph
         unbrowse_context = ""
-        if synapse.query_text:
+        if synapse.destination_node_id:
             unbrowse_results = await self._unbrowse.fetch_context(
-                query=synapse.query_text or synapse.destination_node_id,
+                query=synapse.prior_narrative or synapse.destination_node_id,
                 node_id=synapse.destination_node_id,
                 max_results=2,
             )

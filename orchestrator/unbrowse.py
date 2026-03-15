@@ -171,7 +171,7 @@ class UnbrowseClient:
         lines = ["[External Context via Unbrowse]"]
         total = 0
         for r in results:
-            snippet = r.content[: max_chars // len(results)]
+            snippet = r.content[: max(50, max_chars // len(results))]
             entry = f"- ({r.source_type}) {r.url or 'unknown'}: {snippet}"
             lines.append(entry)
             total += len(entry)

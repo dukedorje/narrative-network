@@ -147,7 +147,7 @@ class DomainMiner:
         if (
             synapse.query_text
             and synapse.query_text != "__corpus_challenge__"
-            and synapse.domain_similarity < UNBROWSE_CORPUS_THRESHOLD
+            and (synapse.domain_similarity or 0.0) < UNBROWSE_CORPUS_THRESHOLD
         ):
             unbrowse_results = await self._unbrowse.fetch_context(
                 query=synapse.query_text,
@@ -155,6 +155,8 @@ class DomainMiner:
                 max_results=2,
             )
             if unbrowse_results:
+                if synapse.chunks is None:
+                    synapse.chunks = []
                 for r in unbrowse_results:
                     synapse.chunks.append({
                         "id": f"unbrowse:{r.url or 'web'}",

@@ -127,6 +127,7 @@ class ProposalSubmitter:
         self.subtensor = subtensor
         self.netuid = netuid
         self.min_bond_tao = min_bond_tao
+        self._nla_client = NLASettlementClient()
 
     # ------------------------------------------------------------------
     # Public API
@@ -225,8 +226,7 @@ class ProposalSubmitter:
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
-        nla = NLASettlementClient()
-        proposal.nla_agreement = nla.build_proposal_agreement(
+        proposal.nla_agreement = self._nla_client.build_proposal_agreement(
             proposal_id=proposal.proposal_id,
             proposer_hotkey=proposal.proposer_hotkey,
             node_id=proposal.node_id,
