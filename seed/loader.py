@@ -11,7 +11,7 @@ from subnet.graph_store import GraphStore
 
 _SEED_DIR = Path(__file__).parent
 _DEFAULT_TOPOLOGY = _SEED_DIR / "topology.yaml"
-_CORPUS_BASE = Path(__file__).parent.parent / "docs" / "corpora" / "quantum_mechanics"
+_CORPUS_BASE = Path(__file__).parent.parent / "docs" / "corpora"
 
 
 def load_topology(
@@ -20,6 +20,10 @@ def load_topology(
     graph_store: GraphStore | None = None,
 ) -> tuple[GraphStore, dict[str, list[Path]]]:
     """Load seed topology into a GraphStore.
+
+    Each node may specify a ``corpus_dir`` field to locate its corpus files
+    under ``corpus_base/<corpus_dir>/``. If omitted, falls back to
+    ``corpus_base/quantum_mechanics/`` for backward compatibility.
 
     Returns:
         (graph_store, corpus_map) where corpus_map is {node_id: [Path, ...]}.
@@ -44,9 +48,11 @@ def load_topology(
             "state": node_def.get("state", "Live"),
             "metadata": node_def.get("metadata", {}),
         })
-        # Map corpus files
+        # Resolve corpus directory: per-node corpus_dir or fallback
+        node_corpus_dir = node_def.get("corpus_dir", "quantum_mechanics")
+        node_corpus_base = corpus_base / node_corpus_dir
         corpus_files = node_def.get("corpus_files", [])
-        corpus_map[node_id] = [corpus_base / fname for fname in corpus_files]
+        corpus_map[node_id] = [node_corpus_base / fname for fname in corpus_files]
 
     # Load edges
     edges_data = []

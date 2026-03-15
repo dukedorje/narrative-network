@@ -1,8 +1,11 @@
-# Seed topology for Narrative Network local development
-# 4 quantum mechanics sub-domains with weighted edges
+# Seed topology for Narrative Network — 16 nodes across 13 knowledge domains
+# The quantum mechanics domain retains its 4 sub-nodes; other domains are single nodes.
+# Edge weights reflect conceptual proximity between domains.
 
 nodes:
+  # ── Quantum Mechanics (4 sub-nodes) ──────────────────────────────────
   - node_id: "quantum-foundations"
+    corpus_dir: "quantum_mechanics"
     state: "Live"
     metadata:
       description: "Core quantum mechanics: wave functions, superposition, uncertainty"
@@ -13,6 +16,7 @@ nodes:
       - "uncertainty_principle.txt"
 
   - node_id: "quantum-phenomena"
+    corpus_dir: "quantum_mechanics"
     state: "Live"
     metadata:
       description: "Observable quantum effects: double slit, tunneling, entanglement"
@@ -23,6 +27,7 @@ nodes:
       - "quantum_entanglement.txt"
 
   - node_id: "quantum-interpretations"
+    corpus_dir: "quantum_mechanics"
     state: "Live"
     metadata:
       description: "Interpretive frameworks: Copenhagen, many-worlds, decoherence"
@@ -33,6 +38,7 @@ nodes:
       - "quantum_decoherence.txt"
 
   - node_id: "quantum-bridge"
+    corpus_dir: "quantum_mechanics"
     state: "Live"
     metadata:
       description: "Angular momentum and spin — bridges foundations to phenomena"
@@ -40,8 +46,202 @@ nodes:
     corpus_files:
       - "spin_and_angular_momentum.txt"
 
+  # ── Relativity ───────────────────────────────────────────────────────
+  - node_id: "relativity"
+    corpus_dir: "relativity"
+    state: "Live"
+    metadata:
+      description: "Special and general relativity: spacetime, mass-energy, gravitational waves"
+      persona: "professor"
+    corpus_files:
+      - "special_relativity_postulates.txt"
+      - "general_relativity_overview.txt"
+      - "spacetime_geometry.txt"
+      - "time_dilation.txt"
+      - "length_contraction.txt"
+      - "mass_energy_equivalence.txt"
+      - "gravitational_waves.txt"
+      - "black_holes_and_singularities.txt"
+
+  # ── Thermodynamics ──────────────────────────────────────────────────
+  - node_id: "thermodynamics"
+    corpus_dir: "thermodynamics"
+    state: "Live"
+    metadata:
+      description: "Laws of thermodynamics, entropy, statistical mechanics, phase transitions"
+      persona: "professor"
+    corpus_files:
+      - "zeroth_and_first_laws.txt"
+      - "second_law_entropy.txt"
+      - "carnot_cycle.txt"
+      - "thermodynamic_potentials.txt"
+      - "statistical_mechanics_foundations.txt"
+      - "phase_transitions.txt"
+      - "heat_transfer_mechanisms.txt"
+      - "non_equilibrium_thermodynamics.txt"
+
+  # ── Chemical Bonding ────────────────────────────────────────────────
+  - node_id: "chemical-bonding"
+    corpus_dir: "chemical_bonding"
+    state: "Live"
+    metadata:
+      description: "Chemical bonds: ionic, covalent, metallic, van der Waals, molecular orbital theory"
+      persona: "experimentalist"
+    corpus_files:
+      - "ionic_bonding.txt"
+      - "covalent_bonding.txt"
+      - "metallic_bonding.txt"
+      - "hydrogen_bonding.txt"
+      - "van_der_waals_forces.txt"
+      - "valence_bond_theory.txt"
+      - "molecular_orbital_theory.txt"
+      - "coordination_chemistry.txt"
+
+  # ── Reaction Kinetics ───────────────────────────────────────────────
+  - node_id: "reaction-kinetics"
+    corpus_dir: "reaction_kinetics"
+    state: "Live"
+    metadata:
+      description: "Chemical reaction rates, catalysis, collision theory, oscillating reactions"
+      persona: "experimentalist"
+    corpus_files:
+      - "rate_laws_and_reaction_order.txt"
+      - "collision_theory.txt"
+      - "transition_state_theory.txt"
+      - "catalysis_mechanisms.txt"
+      - "chain_reactions.txt"
+      - "photochemical_reactions.txt"
+      - "oscillating_reactions.txt"
+      - "diffusion_and_transport.txt"
+
+  # ── Stellar Dynamics ────────────────────────────────────────────────
+  - node_id: "stellar-dynamics"
+    corpus_dir: "stellar_dynamics"
+    state: "Live"
+    metadata:
+      description: "Stellar evolution, nuclear fusion, supernovae, neutron stars"
+      persona: "professor"
+    corpus_files:
+      - "stellar_structure_and_equilibrium.txt"
+      - "nuclear_fusion_in_stars.txt"
+      - "stellar_evolution_main_sequence.txt"
+      - "red_giants_and_stellar_death.txt"
+      - "supernovae.txt"
+      - "white_dwarfs_neutron_stars.txt"
+      - "binary_star_systems.txt"
+      - "stellar_populations_and_metallicity.txt"
+
+  # ── Evolution ───────────────────────────────────────────────────────
+  - node_id: "evolution"
+    corpus_dir: "evolution"
+    state: "Live"
+    metadata:
+      description: "Biological evolution: natural selection, speciation, evo-devo, gene transfer"
+      persona: "neutral"
+    corpus_files:
+      - "natural_selection_mechanism.txt"
+      - "genetic_drift_and_neutral_evolution.txt"
+      - "speciation_and_reproductive_isolation.txt"
+      - "sexual_selection.txt"
+      - "coevolution_and_arms_races.txt"
+      - "horizontal_gene_transfer.txt"
+      - "evo_devo.txt"
+      - "major_evolutionary_transitions.txt"
+
+  # ── Emergence ───────────────────────────────────────────────────────
+  - node_id: "emergence"
+    corpus_dir: "emergence"
+    state: "Live"
+    metadata:
+      description: "Emergent phenomena: complex systems, swarms, cellular automata, neural networks"
+      persona: "philosopher"
+    corpus_files:
+      - "what_is_emergence.txt"
+      - "emergence_in_complex_systems.txt"
+      - "emergence_and_downward_causation.txt"
+      - "cellular_automata_and_emergence.txt"
+      - "flocking_and_swarm_behavior.txt"
+      - "emergence_in_ant_colonies.txt"
+      - "emergence_in_neural_networks.txt"
+      - "phase_transitions_as_emergence.txt"
+
+  # ── Consciousness ───────────────────────────────────────────────────
+  - node_id: "consciousness"
+    corpus_dir: "consciousness"
+    state: "Live"
+    metadata:
+      description: "Theories of consciousness: hard problem, IIT, global workspace, machine consciousness"
+      persona: "philosopher"
+    corpus_files:
+      - "hard_problem_of_consciousness.txt"
+      - "neural_correlates_of_consciousness.txt"
+      - "integrated_information_theory.txt"
+      - "global_workspace_theory.txt"
+      - "higher_order_theories.txt"
+      - "enactivism_and_embodied_mind.txt"
+      - "consciousness_and_time.txt"
+      - "machine_consciousness.txt"
+
+  # ── Epistemology ────────────────────────────────────────────────────
+  - node_id: "epistemology"
+    corpus_dir: "epistemology"
+    state: "Live"
+    metadata:
+      description: "Theory of knowledge: JTB, skepticism, naturalized epistemology, social epistemology"
+      persona: "philosopher"
+    corpus_files:
+      - "justified_true_belief.txt"
+      - "skepticism_and_responses.txt"
+      - "foundationalism_and_coherentism.txt"
+      - "reliabilism_and_virtue_epistemology.txt"
+      - "naturalized_epistemology.txt"
+      - "scientific_knowledge_and_method.txt"
+      - "social_epistemology.txt"
+      - "bayesian_epistemology.txt"
+
+  # ── Information Theory ──────────────────────────────────────────────
+  - node_id: "information-theory"
+    corpus_dir: "information_theory"
+    state: "Live"
+    metadata:
+      description: "Shannon entropy, channel capacity, error correction, data compression"
+      persona: "professor"
+    corpus_files:
+      - "shannon_entropy.txt"
+      - "channel_capacity.txt"
+      - "mutual_information.txt"
+      - "source_coding_theorem.txt"
+      - "data_compression.txt"
+      - "error_correction_codes.txt"
+
+  # ── Recursion ───────────────────────────────────────────────────────
+  - node_id: "recursion"
+    corpus_dir: "recursion"
+    state: "Live"
+    metadata:
+      description: "Recursive structures: fundamentals, divide-and-conquer, dynamic programming"
+      persona: "professor"
+    corpus_files:
+      - "recursion_fundamentals.txt"
+      - "divide_and_conquer.txt"
+      - "dynamic_programming.txt"
+      - "mutual_and_higher_order_recursion.txt"
+
+  # ── Topology (mathematics) ──────────────────────────────────────────
+  - node_id: "topology"
+    corpus_dir: "topology"
+    state: "Live"
+    metadata:
+      description: "Topological spaces, manifolds, homotopy, homology"
+      persona: "professor"
+    corpus_files:
+      - "topological_spaces.txt"
+      - "manifolds_and_surfaces.txt"
+      - "homotopy_and_fundamental_group.txt"
+      - "homology_theory.txt"
+
 edges:
-  # Foundations connects to everything
+  # ── Quantum internal edges (preserved) ─────────────────────────────
   - source_id: "quantum-foundations"
     dest_id: "quantum-phenomena"
     weight: 2.0
@@ -51,8 +251,6 @@ edges:
   - source_id: "quantum-foundations"
     dest_id: "quantum-bridge"
     weight: 1.8
-
-  # Phenomena connects back and to interpretations
   - source_id: "quantum-phenomena"
     dest_id: "quantum-foundations"
     weight: 1.5
@@ -62,16 +260,12 @@ edges:
   - source_id: "quantum-phenomena"
     dest_id: "quantum-bridge"
     weight: 1.0
-
-  # Interpretations connects back
   - source_id: "quantum-interpretations"
     dest_id: "quantum-foundations"
     weight: 1.5
   - source_id: "quantum-interpretations"
     dest_id: "quantum-phenomena"
     weight: 1.8
-
-  # Bridge connects to all (hub node)
   - source_id: "quantum-bridge"
     dest_id: "quantum-foundations"
     weight: 1.8
@@ -81,3 +275,185 @@ edges:
   - source_id: "quantum-bridge"
     dest_id: "quantum-interpretations"
     weight: 1.2
+
+  # ── Physics cluster ────────────────────────────────────────────────
+  # Quantum <-> Relativity (modern physics)
+  - source_id: "quantum-foundations"
+    dest_id: "relativity"
+    weight: 1.8
+  - source_id: "relativity"
+    dest_id: "quantum-foundations"
+    weight: 1.8
+
+  # Quantum <-> Thermodynamics (statistical mechanics / quantum stats)
+  - source_id: "quantum-foundations"
+    dest_id: "thermodynamics"
+    weight: 1.2
+  - source_id: "thermodynamics"
+    dest_id: "quantum-foundations"
+    weight: 1.2
+
+  # Relativity <-> Stellar Dynamics (astrophysics)
+  - source_id: "relativity"
+    dest_id: "stellar-dynamics"
+    weight: 2.0
+  - source_id: "stellar-dynamics"
+    dest_id: "relativity"
+    weight: 2.0
+
+  # Thermodynamics <-> Stellar Dynamics (stellar thermodynamics)
+  - source_id: "thermodynamics"
+    dest_id: "stellar-dynamics"
+    weight: 1.8
+  - source_id: "stellar-dynamics"
+    dest_id: "thermodynamics"
+    weight: 1.8
+
+  # ── Chemistry cluster ──────────────────────────────────────────────
+  # Chemical Bonding <-> Reaction Kinetics (chemistry core)
+  - source_id: "chemical-bonding"
+    dest_id: "reaction-kinetics"
+    weight: 2.0
+  - source_id: "reaction-kinetics"
+    dest_id: "chemical-bonding"
+    weight: 2.0
+
+  # Thermodynamics <-> Reaction Kinetics (physical chemistry)
+  - source_id: "thermodynamics"
+    dest_id: "reaction-kinetics"
+    weight: 1.8
+  - source_id: "reaction-kinetics"
+    dest_id: "thermodynamics"
+    weight: 1.8
+
+  # Quantum <-> Chemical Bonding (quantum chemistry)
+  - source_id: "quantum-foundations"
+    dest_id: "chemical-bonding"
+    weight: 1.5
+  - source_id: "chemical-bonding"
+    dest_id: "quantum-foundations"
+    weight: 1.5
+
+  # Thermodynamics <-> Chemical Bonding (bond energetics)
+  - source_id: "thermodynamics"
+    dest_id: "chemical-bonding"
+    weight: 1.2
+  - source_id: "chemical-bonding"
+    dest_id: "thermodynamics"
+    weight: 1.2
+
+  # ── Life sciences cluster ──────────────────────────────────────────
+  # Evolution <-> Emergence (complex adaptive systems)
+  - source_id: "evolution"
+    dest_id: "emergence"
+    weight: 2.0
+  - source_id: "emergence"
+    dest_id: "evolution"
+    weight: 2.0
+
+  # Emergence <-> Consciousness (emergent mind)
+  - source_id: "emergence"
+    dest_id: "consciousness"
+    weight: 1.8
+  - source_id: "consciousness"
+    dest_id: "emergence"
+    weight: 1.8
+
+  # Evolution <-> Consciousness (evolved cognition)
+  - source_id: "evolution"
+    dest_id: "consciousness"
+    weight: 1.2
+  - source_id: "consciousness"
+    dest_id: "evolution"
+    weight: 1.2
+
+  # ── Philosophy cluster ─────────────────────────────────────────────
+  # Consciousness <-> Epistemology (philosophy of mind meets knowledge)
+  - source_id: "consciousness"
+    dest_id: "epistemology"
+    weight: 1.8
+  - source_id: "epistemology"
+    dest_id: "consciousness"
+    weight: 1.8
+
+  # Epistemology <-> Quantum Interpretations (measurement problem, observer)
+  - source_id: "epistemology"
+    dest_id: "quantum-interpretations"
+    weight: 1.5
+  - source_id: "quantum-interpretations"
+    dest_id: "epistemology"
+    weight: 1.5
+
+  # ── Formal sciences cluster ────────────────────────────────────────
+  # Information Theory <-> Recursion (computation + information)
+  - source_id: "information-theory"
+    dest_id: "recursion"
+    weight: 1.8
+  - source_id: "recursion"
+    dest_id: "information-theory"
+    weight: 1.8
+
+  # Topology <-> Recursion (mathematical structures)
+  - source_id: "topology"
+    dest_id: "recursion"
+    weight: 1.2
+  - source_id: "recursion"
+    dest_id: "topology"
+    weight: 1.2
+
+  # Information Theory <-> Emergence (complexity + information)
+  - source_id: "information-theory"
+    dest_id: "emergence"
+    weight: 1.5
+  - source_id: "emergence"
+    dest_id: "information-theory"
+    weight: 1.5
+
+  # Information Theory <-> Quantum (quantum information)
+  - source_id: "information-theory"
+    dest_id: "quantum-phenomena"
+    weight: 1.5
+  - source_id: "quantum-phenomena"
+    dest_id: "information-theory"
+    weight: 1.5
+
+  # Information Theory <-> Epistemology (Bayesian epistemology + information)
+  - source_id: "information-theory"
+    dest_id: "epistemology"
+    weight: 1.2
+  - source_id: "epistemology"
+    dest_id: "information-theory"
+    weight: 1.2
+
+  # ── Cross-cluster bridges ──────────────────────────────────────────
+  # Thermodynamics <-> Emergence (phase transitions as emergence)
+  - source_id: "thermodynamics"
+    dest_id: "emergence"
+    weight: 1.5
+  - source_id: "emergence"
+    dest_id: "thermodynamics"
+    weight: 1.5
+
+  # Topology <-> Relativity (differential geometry of spacetime)
+  - source_id: "topology"
+    dest_id: "relativity"
+    weight: 1.5
+  - source_id: "relativity"
+    dest_id: "topology"
+    weight: 1.5
+
+  # Reaction Kinetics <-> Evolution (chemical evolution, origin of life)
+  - source_id: "reaction-kinetics"
+    dest_id: "evolution"
+    weight: 1.0
+  - source_id: "evolution"
+    dest_id: "reaction-kinetics"
+    weight: 1.0
+
+  # Information Theory <-> Thermodynamics (Maxwell's demon, Landauer's principle)
+  - source_id: "information-theory"
+    dest_id: "thermodynamics"
+    weight: 1.5
+  - source_id: "thermodynamics"
+    dest_id: "information-theory"
+    weight: 1.5
