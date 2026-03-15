@@ -1,0 +1,61 @@
+Shannon's source coding theorem stands as one of the most consequential results in the mathematical theory of communication, establishing
+  an absolute lower bound on the compressibility of information produced by a stochastic source. Proved by Claude Shannon in his landmark
+ 1948 paper, the theorem asserts that the entropy of a source — measured in bits — is precisely the minimum average number of binary
+ digits required to encode its output without loss of information. This is not merely a statement about existing compression algorithms
+ but a fundamental constraint imposed by mathematics itself on any conceivable encoding scheme, however ingenious.
+
+ To understand the theorem precisely, one must first understand the concept of entropy in Shannon's sense. For a discrete random variable
+ X taking values from a finite alphabet with probability distribution p, the entropy H(X) is defined as the negative expected logarithm of
+  the probability: H(X) = -∑ p(x) log₂ p(x). This quantity captures the average uncertainty associated with the outcome of the random
+ variable. A fair coin has entropy of exactly one bit; a biased coin has lower entropy, reflecting the fact that its outcomes are more
+ predictable and therefore carry less surprise. A source that always produces the same symbol has zero entropy, and indeed requires zero
+ bits per symbol to encode — there is nothing to communicate.
+
+ The source coding theorem connects entropy to compression via the notion of a code. A uniquely decodable code assigns binary strings to
+ source symbols or sequences of symbols in a way that allows unambiguous recovery of the original message from the encoded bitstream. The
+ average code length per source symbol is the expected length of the codeword assigned to each symbol. Shannon's theorem states that for
+ any uniquely decodable code, the average code length cannot be less than H(X) bits per symbol. Conversely, there always exists a uniquely
+  decodable code achieving an average length strictly less than H(X) + 1. Together these bounds establish entropy as the fundamental
+ currency of lossless compression.
+
+ The deeper and more subtle version of the theorem concerns sequences of symbols from an ergodic source. When one encodes not individual
+ symbols but long blocks of n symbols, the compression efficiency improves dramatically. Shannon showed that as the block length n grows,
+ the minimum achievable average code length per symbol converges precisely to the source entropy H. This convergence is not accidental; it
+  follows from the asymptotic equipartition property, one of the most elegant results in information theory. The AEP states that for a
+ stationary ergodic source, almost all long sequences of length n fall into a set of roughly 2^(nH) equally likely "typical" sequences,
+ while the remaining sequences have vanishingly small total probability.
+
+ The typical set is the engine of compression. Because the number of typical sequences grows only as 2^(nH), rather than as the 2^n total
+ possible sequences, one needs only nH bits to index into the typical set. The remaining sequences — those with probabilities either much
+ higher or much lower than 2^(-nH) — have negligible total probability and can be handled with a simple fallback encoding. The code
+ assigns short codewords to typical sequences and longer codewords to atypical ones, but the atypical sequences contribute so little to
+ the expected encoding length that the average remains close to H bits per symbol. As n tends to infinity, the contribution of atypical
+ sequences vanishes entirely, and the average code length per symbol approaches H exactly.
+
+ The law of large numbers underpins the AEP in a transparent way. By the definition of a stationary ergodic source, the empirical
+ frequency of each symbol in a long sequence converges with probability one to the true probability. It follows that the per-symbol
+ log-probability of the sequence, (-1/n) log p(x₁, x₂, ..., xₙ), converges in probability to the source entropy H. Sequences whose
+ per-symbol log-probability deviates significantly from H are precisely the atypical sequences, and the convergence in probability
+ guarantees that their total probability goes to zero. The typical set thus captures the measure-theoretically essential part of the
+ source output.
+
+ Practical compression algorithms do not explicitly construct the typical set, but they achieve similar efficiency through other means.
+ Huffman coding assigns shorter codewords to more probable symbols and achieves average lengths within one bit of the entropy for
+ symbol-by-symbol coding. Arithmetic coding effectively encodes entire sequences and can approach the entropy limit arbitrarily closely
+ for long sequences. Lempel-Ziv algorithms, which underlie standard formats like gzip and PNG, achieve asymptotically optimal compression
+ for any ergodic source without requiring knowledge of the source statistics in advance. These algorithms are universal in the sense that
+ their compression ratio converges to the entropy regardless of the particular source distribution.
+
+ The source coding theorem also illuminates the relationship between redundancy and reliability. Any practical communication or storage
+ system operates with some redundancy — extra bits beyond the information-theoretic minimum — to enable error detection or recovery.
+ Shannon's companion channel coding theorem establishes that such redundancy can be added in a controlled way to protect against channel
+ noise while still achieving rates arbitrarily close to the channel capacity. Together, the source and channel coding theorems define the
+ architecture of modern digital communication: compress the source to remove redundancy, then add back controlled redundancy for error
+ protection.
+
+ Code efficiency is measured as the ratio of the source entropy to the actual average code length. A perfectly efficient code has
+ efficiency one, achievable only in the limit of infinite block length. For finite-length codes, the efficiency is always strictly less
+ than one, though it can be made arbitrarily close to one by increasing the block length. The gap between the actual code length and the
+ entropy bound represents wasted bandwidth or storage, and minimizing this gap is the central engineering challenge of data compression.
+ Shannon's theorem guarantees that this gap can be made arbitrarily small but never negative — information has an irreducible cost, and
+ entropy is its price.
