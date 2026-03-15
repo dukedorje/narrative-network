@@ -28,12 +28,12 @@ class DomainMiner:
 
     def __init__(
         self,
-        config: bt.config | None = None,
+        config: bt.Config | None = None,
         corpus_dir: str | None = None,
         node_id: str | None = None,
         whitelist_hotkeys: list[str] | None = None,
     ) -> None:
-        self.config = config or bt.config()
+        self.config = config or bt.Config()
         self.wallet = bt.Wallet(config=self.config)
         self.subtensor = bt.Subtensor(config=self.config)
         self.metagraph = self.subtensor.metagraph(NETUID)

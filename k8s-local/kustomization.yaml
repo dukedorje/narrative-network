@@ -1,0 +1,152 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: narrative-network
+
+resources:
+  - ../k8s
+
+labels:
+  - pairs:
+      environment: local
+
+patches:
+  # --- Remove services that need Bittensor network ---
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: gateway-hpa
+    patch: |
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: gateway-hpa
+  - target:
+      kind: StatefulSet
+      name: ipfs
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: ipfs
+  - target:
+      kind: Service
+      name: ipfs
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ipfs
+  - target:
+      kind: Ingress
+      name: narrative-network-ingress
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: narrative-network-ingress
+  - target:
+      kind: Deployment
+      name: domain-miner
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: domain-miner
+  - target:
+      kind: Service
+      name: domain-miner
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: domain-miner
+  - target:
+      kind: PersistentVolumeClaim
+      name: domain-miner-corpus
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: domain-miner-corpus
+  - target:
+      kind: Deployment
+      name: narrative-miner
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: narrative-miner
+  - target:
+      kind: Service
+      name: narrative-miner
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: narrative-miner
+  - target:
+      kind: StatefulSet
+      name: validator
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: validator
+  - target:
+      kind: Service
+      name: validator
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: validator
+
+  # --- Configure remaining services for local dev ---
+  - target:
+      kind: Secret
+      name: narrative-network-secrets
+    patch: |
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: narrative-network-secrets
+      stringData:
+        OPENROUTER_API_KEY: "sk-placeholder-local-dev"
+        DATABASE_URL: "postgresql://user:password@localhost:5432/narrative_network"
+        REDIS_URL: "redis://redis:6379/0"
+        BT_WALLET_MNEMONIC: "placeholder"
+  - target:
+      kind: ConfigMap
+      name: narrative-network-config
+    patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: narrative-network-config
+      data:
+        AXON_NETWORK: "local"
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1

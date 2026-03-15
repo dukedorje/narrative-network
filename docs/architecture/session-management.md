@@ -24,7 +24,7 @@ CORS middleware is configured via `SubnetConfig`. Allowed origins, headers, and 
 
 ### Session Registry
 
-Sessions are stored in an in-memory registry for the current deployment. Redis is planned as the backing store when multi-instance high availability is required.
+Sessions are backed by Redis with an in-memory fallback for local development. The Redis session store is implemented in `domain/narrative/session_store.py` and used by both the gateway (for session records) and narrative miners (for per-session narrative context, 7-day TTL).
 
 ---
 

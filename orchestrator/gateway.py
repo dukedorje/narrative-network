@@ -287,3 +287,90 @@ def create_app(
         }
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# Standalone / dev app instance
+# ---------------------------------------------------------------------------
+
+def create_dev_app() -> FastAPI:
+    """Create a standalone gateway for local dev (no Bittensor connection)."""
+    graph_store = GraphStore(db_path=None)  # in-memory only
+    embedder = Embedder()
+    safety_guard = PathSafetyGuard()
+
+    app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "mode": "standalone",
+            "netuid": NETUID,
+            "graph_stats": graph_store.stats(),
+        }
+
+    @app.get("/graph/stats")
+    async def graph_stats() -> dict:
+        return graph_store.stats()
+
+    return app
+
+
+import os as _os
+
+if _os.environ.get("AXON_NETWORK") == "local":
+    # Standalone dev mode — no Bittensor wallet/subtensor needed
+    app = create_dev_app()
+else:
+    # Production: app must be created via main() with Bittensor deps
+    app = None  # type: ignore[assignment]
+
+
+def main() -> None:
+    import uvicorn
+
+    network = _os.environ.get("AXON_NETWORK", "finney")
+    if network == "local":
+        uvicorn.run(
+            "orchestrator.gateway:app",
+            host="0.0.0.0",
+            port=8080,
+            reload=False,
+        )
+    else:
+        import bittensor as bt
+        from subnet import NETUID as _netuid
+
+        config = bt.Config()
+        wallet = bt.Wallet(config=config)
+        subtensor = bt.Subtensor(config=config)
+        metagraph = subtensor.metagraph(_netuid)
+
+        graph_store = GraphStore()
+        embedder = Embedder()
+        router = Router(graph_store=graph_store, embedder=embedder)
+        safety_guard = PathSafetyGuard(graph_store=graph_store)
+
+        _app = create_app(
+            graph_store=graph_store,
+            embedder=embedder,
+            router=router,
+            safety_guard=safety_guard,
+            wallet=wallet,
+            subtensor=subtensor,
+            metagraph=metagraph,
+        )
+        uvicorn.run(_app, host="0.0.0.0", port=8080)
+
+
+if __name__ == "__main__":
+    main()

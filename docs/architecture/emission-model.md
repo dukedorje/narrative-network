@@ -18,138 +18,128 @@ The Bittensor protocol distributes each subnet's emission per tempo as follows:
 
 ---
 
-## Weight-Setting Strategy: Four Scoring Axes
+## Weight-Setting Strategy: Three Emission Pools
 
-Our validators compute a combined score per miner UID. This score becomes the weight set via `subtensor.set_weights()`. The four axes determine how the 41% miner emission is distributed:
+The validator's `EmissionCalculator` (`subnet/emissions.py`) combines three pools into the final weight vector submitted to Yuma Consensus via `set_weights()`. The pools use different normalization strategies to suit the behavior they incentivize:
 
-| Axis | Weight | Purpose | Equivalent to |
-|------|--------|---------|---------------|
-| Traversal quality | 0.40 | Reward relevant chunk retrieval and passage groundedness | Traversal pool |
-| Narrative quality | 0.30 | Reward coherent, well-synthesized narrative passages | Quality bonus |
-| Topology importance | 0.15 | Reward structurally important bridge nodes | Topology pool |
-| Corpus integrity | 0.15 | Penalize inconsistent or fraudulent corpora | Integrity enforcement |
+| Pool | Share | Normalization | What it rewards |
+|------|-------|---------------|-----------------|
+| TraversalPool | 50% | Linear (sum-normalized) | High-traffic, high-relevance nodes |
+| QualityPool | 30% | Softmax | Competitive narrative quality |
+| TopologyPool | 20% | Rank-based | Structural bridge importance |
 
 ```python
-final_weight = (
-    0.40 * traversal_score +
-    0.30 * quality_score +
-    0.15 * topology_score +
-    0.15 * corpus_score
+# From subnet/emissions.py — EmissionCalculator.compute()
+score = (
+    traversal_share * t_weights[i]   # 0.50
+    + quality_share * q_weights[i]   # 0.30
+    + topology_share * top_weights[i] # 0.20
 )
+# Corpus gate: zero corpus score collapses weight to near-zero
+if snap.corpus_score == 0.0:
+    score = 1e-6
 ```
 
-Within each axis, domain miners and narrative miners compete for the same weight allocation. The scoring naturally favors the miner type doing the relevant work:
-
-- **Traversal quality**: Domain miners score higher (they serve the chunks being evaluated)
-- **Narrative quality**: Narrative miners score higher (they generate the passages)
-- **Topology importance**: Both benefit equally from structural position
-- **Corpus integrity**: Domain miners are primarily affected (they commit Merkle roots)
-
-### mechid Consideration
-
-SDK v10 supports `mechid` — subnets can run up to 2 independent incentive mechanisms. We may use:
-- `mechid=0`: Combined scoring (default, described above)
-- `mechid=1`: Future — separate narrative-only scoring track
-
-For MVP, a single mechanism (`mechid=0`) with the combined four-axis score is sufficient.
+The final combined scores are L1-normalized before being passed to `set_weights()`.
 
 ---
 
-## Traversal Quality (weight: 0.40)
+## Corpus Score: A Gate, Not a Pool
 
-Measures how relevant the miner's contribution is to the actual traversal.
+Corpus integrity is **not** a fourth emission pool. It is a binary gate applied after pool combination:
 
-For each completed `NarrativeHop` in an epoch, validators score:
-- Cosine similarity between returned chunks and query embedding
-- Passage groundedness against retrieved chunks
-- Latency penalty beyond soft limit
+- `corpus_score == 0.0` → miner's combined weight is floored to `1e-6` (near-zero emission → eventual deregistration)
+- `corpus_score > 0.0` → no effect on combined weight; the miner competes normally across all three pools
 
-```python
-def score_traversal(response, hop_context):
-    chunk_relevance = cosine_similarity(response.chunks, hop_context.query_embedding)
-    groundedness = cosine_similarity(response.passage_embedding, hop_context.domain_centroid)
-
-    # Latency penalty
-    latency_excess = max(0, response.process_time - LATENCY_SOFT_LIMIT_S)
-    penalty = min(latency_excess * LATENCY_PENALTY_PER_S, LATENCY_MAX_PENALTY)
-
-    raw = 0.6 * chunk_relevance + 0.4 * groundedness
-    return raw * (1 - penalty)
-```
-
-Key insight: quality-weighting inside traversal scoring means high-quality nodes on high-traffic paths compound rewards. A miner improving average score from 0.65 to 0.80 on a well-traversed node earns significantly more than the absolute score increase suggests.
+This means corpus fraud has an outsized punishment: it zeroes out emission regardless of how well a miner performs on traversal, quality, or topology. There is no partial credit pathway that lets a fraudulent miner survive.
 
 ---
 
-## Narrative Quality (weight: 0.30)
+## The Four Scoring Axes (reward.py)
 
-Measures passage coherence, synthesis quality, and narrative continuity.
+The four axes in `subnet/reward.py` describe how **raw scores are computed per miner per hop**. They are the inputs to the emission system, not the emission system itself:
 
-```python
-def score_quality(response, hop_context):
-    # Coherence: does the passage connect to the path so far?
-    path_coherence = cosine_similarity(
-        response.passage_embedding,
-        mean(hop_context.path_embeddings)
-    )
+| Axis | Described weight | Purpose | Used in |
+|------|-----------------|---------|---------|
+| Traversal quality | 0.40 | Chunk relevance + passage groundedness + latency | TraversalPool input |
+| Narrative quality | 0.30 | Path coherence + directional progress + length | QualityPool input |
+| Topology importance | 0.15 | Betweenness centrality + edge weight sum | TopologyPool input |
+| Corpus integrity | 0.15 | Merkle root stability | Corpus gate |
 
-    # Direction: does it move toward the destination domain?
-    directional_progress = cosine_similarity(
-        response.passage_embedding,
-        hop_context.destination_centroid
-    ) - cosine_similarity(
-        response.passage_embedding,
-        hop_context.source_centroid
-    )
+The 0.40/0.30/0.15/0.15 weights in `reward.py` describe the **sub-score composition within each axis**. They do not directly set emission pool shares. Pool shares (50%/30%/20%) are configured separately in `subnet/config.py` as `EMISSION_TRAVERSAL_SHARE`, `EMISSION_QUALITY_SHARE`, and `EMISSION_TOPOLOGY_SHARE`.
 
-    # Word count heuristic (MVP; replaced by embedding scoring later)
-    word_count = len(response.narrative_passage.split())
-    length_score = 1.0 if MIN_HOP_WORDS <= word_count <= MAX_HOP_WORDS else 0.4
+### Validator Scoring Loop
 
-    return 0.4 * path_coherence + 0.3 * max(0, directional_progress) + 0.3 * length_score
-```
-
-Comparative scoring: multiple miners respond to the same `NarrativeHop`. Validators rank them comparatively — no ground truth needed. The best passage wins not because it matches a correct answer but because it best serves the attractor basin relative to competitors.
+The scoring loop in `subnet/validator.py` that calls `reward.py` and feeds `EmissionCalculator` is currently a skeleton (TODO). The pool and gate architecture is implemented and tested; wiring the live scoring loop to `set_weights()` is Phase 1 MVP work.
 
 ---
 
-## Topology Importance (weight: 0.15)
+## TraversalPool (50%)
 
-Derived from the validator's local graph store. Measures structural importance independent of current traffic volume.
+Rewards miners with high traversal traffic weighted by relevance score.
 
 ```python
-def score_topology(node_id, graph_store):
-    centrality = graph_store.betweenness_centrality(node_id)  # Brandes O(VE)
-    edge_weight_sum = graph_store.outgoing_edge_weight_sum(node_id)
-
-    return (
-        0.6 * min(centrality, 1.0) +
-        0.4 * min(log1p(edge_weight_sum) / log1p(50), 1.0)
-    )
+# From subnet/emissions.py — TraversalPool.weights()
+raw = [s.traversal_score * max(s.traversal_count, 1) for s in snapshots]
+return _linear_normalise(raw)  # divide each by total sum
 ```
 
-- **Betweenness centrality** (60%) — rewards miners whose nodes bridge distinct clusters
-- **Outgoing edge weight sum** (40%) — soft-capped via `log1p` to prevent saturation
+Linear normalization means rewards scale proportionally with both quality (traversal_score) and volume (traversal_count). A miner improving average score from 0.65 to 0.80 on a well-traversed node earns significantly more than the absolute score increase suggests — quality and traffic compound.
+
+Raw traversal scores are computed in `reward.py → score_traversal()`:
+```python
+chunk_relevance = cosine_similarity(chunks_embedding, query_embedding)
+groundedness = cosine_similarity(passage_embedding, domain_centroid)
+latency_excess = max(0.0, process_time - LATENCY_SOFT_LIMIT_S)
+penalty = min(latency_excess * LATENCY_PENALTY_PER_S, LATENCY_MAX_PENALTY)
+raw = 0.6 * chunk_relevance + 0.4 * groundedness
+return max(0.0, raw * (1.0 - penalty))
+```
+
+---
+
+## QualityPool (30%)
+
+Rewards miners producing high-quality narrative passages, using softmax to sharpen competition.
+
+```python
+# From subnet/emissions.py — QualityPool.weights()
+return _softmax([s.quality_score for s in snapshots])
+```
+
+Softmax amplifies differences between miners: a miner with score 0.8 earns substantially more than one with 0.7, creating sharp competitive pressure at the top of the quality distribution.
+
+Raw quality scores are computed in `reward.py → score_quality()`:
+```python
+return 0.4 * path_coherence + 0.3 * directional_progress + 0.3 * length_score
+```
+
+Comparative scoring: multiple miners respond to the same `NarrativeHop`. The best passage wins not because it matches a correct answer but because it best serves the traversal path relative to competitors.
+
+---
+
+## TopologyPool (20%)
+
+Rewards miners whose nodes are structurally important as bridges, independent of current traffic volume.
+
+```python
+# From subnet/emissions.py — TopologyPool.weights()
+return _rank_normalise([s.topology_score for s in snapshots])
+```
+
+Rank normalization (not linear) means relative ordering matters, not absolute score magnitude. This prevents a single dominant hub from claiming the entire topology allocation.
+
+Raw topology scores are computed in `reward.py → score_topology()`:
+```python
+bc = min(betweenness_centrality, 1.0)
+ew = min(math.log1p(outgoing_edge_weight_sum) / math.log1p(EDGE_WEIGHT_CAP), 1.0)
+return BETWEENNESS_WEIGHT * bc + EDGE_WEIGHT_SUM_WEIGHT * ew
+```
+
+- **Betweenness centrality** — rewards miners whose nodes bridge distinct clusters (Brandes O(VE))
+- **Outgoing edge weight sum** — soft-capped via `log1p` to prevent saturation
 
 Key property: newly integrated bridge nodes earn meaningful topology scores from day one, before traffic discovery. This gives new entrants a viable strategy: extend the graph into underserved regions rather than competing head-to-head with established hubs.
-
----
-
-## Corpus Integrity (weight: 0.15)
-
-Verifies that domain miners serve consistent, honest corpora.
-
-```python
-def score_corpus(miner_uid, challenge_result):
-    if challenge_result.merkle_root_matches:
-        return 1.0   # consistent corpus
-    elif challenge_result.partial_match:
-        return 0.3   # some chunks changed (may indicate legitimate update)
-    else:
-        return 0.0   # fraud or severe inconsistency
-```
-
-A score of 0.0 here means the miner receives near-zero overall weight → zero emission → eventual deregistration. This is the primary enforcement mechanism (see "Penalty Mechanics" below).
 
 ---
 
@@ -185,7 +175,7 @@ Validators assign zero or near-zero weight to misbehaving miners:
 - Sustained zero emission → economic death
 - Eventually replaced by new registrant (lowest-emission UID deregistered when slots are full)
 
-This is sufficient for: corpus fraud, quality drops, semantic drift, inactivity.
+The corpus gate (`corpus_score == 0.0 → 1e-6`) is the primary enforcement mechanism for corpus fraud. It overrides all pool scores and is sufficient for: corpus fraud, quality drops, semantic drift, inactivity.
 
 ### 2. Bond Forfeiture (Off-Chain / Alkahest)
 
@@ -200,7 +190,7 @@ This is sufficient for: proposal spam, failed incubation, manifest fraud.
 
 ## Validator Earnings
 
-Validators earn from the protocol's 41% validator+staker share, **not** from a custom "quality pool." Their earnings are determined by:
+Validators earn from the protocol's 41% validator+staker share, **not** from a custom emission pool. Their earnings are determined by:
 
 1. **Bond mechanism**: Yuma Consensus computes bonds based on how well validator weights align with consensus. Higher alignment → larger bond → larger dividend share.
 2. **vtrust**: Sum of consensus-clipped weights. Validators with high vtrust earn proportionally more.
@@ -230,19 +220,19 @@ Negative net flow = zero emissions = subnet death spiral. Staker confidence is e
 
 ### 1. Traffic concentration hedge
 
-Popular hubs earn more from traversal quality weighting. Structurally important bridges earn more from topology scoring. The two axes hedge each other: established hubs dominate traversal, new bridge nodes dominate topology.
+Popular hubs earn more from the TraversalPool (linear normalization rewards volume × quality). Structurally important bridges earn more from TopologyPool (rank normalization, independent of traffic). The two pools hedge each other: established hubs dominate traversal, new bridge nodes dominate topology.
 
 ### 2. Quality compounding
 
-Higher scores → more emission → better hardware → higher quality → more wins. This convexity is intentional. The network rewards quality escalation, not just participation.
+Higher scores → more emission → better hardware → higher quality → more wins. This convexity is intentional. Softmax in QualityPool sharpens this effect at the top of the distribution. The network rewards quality escalation, not just participation.
 
 ### 3. New entrant strategy
 
 New miners cannot beat established hubs on quality immediately. But they can extend the graph into underserved regions, earning topology rewards that fund infrastructure for eventual quality competition.
 
-### 4. No separate "pools"
+### 4. Single unified weight vector
 
-Unlike our original design, there are no separate token pools with independent distribution. All miner emission flows through a single weight vector. The "pools" are axis weights in the scoring function — they shape the weight vector, but the distribution mechanism is unified through Yuma Consensus.
+All miner emission flows through a single weight vector submitted to Yuma Consensus. The three pools shape how that vector is computed, but the distribution mechanism is unified — Yuma Consensus handles aggregation across validators.
 
 ---
 
@@ -250,12 +240,14 @@ Unlike our original design, there are no separate token pools with independent d
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `TRAVERSAL_WEIGHT` | Weight for traversal axis | 0.40 |
-| `QUALITY_WEIGHT` | Weight for quality axis | 0.30 |
-| `TOPOLOGY_WEIGHT` | Weight for topology axis | 0.15 |
-| `CORPUS_WEIGHT` | Weight for corpus axis | 0.15 |
+| `EMISSION_TRAVERSAL_SHARE` | TraversalPool fraction | 0.50 |
+| `EMISSION_QUALITY_SHARE` | QualityPool fraction | 0.30 |
+| `EMISSION_TOPOLOGY_SHARE` | TopologyPool fraction | 0.20 |
 | `LATENCY_SOFT_LIMIT_S` | Seconds before latency penalty | 3.0 |
 | `LATENCY_PENALTY_PER_S` | Penalty per excess second | 0.1 |
 | `LATENCY_MAX_PENALTY` | Maximum latency penalty | 0.5 |
 | `MIN_HOP_WORDS` | Minimum passage word count | 100 |
 | `MAX_HOP_WORDS` | Maximum passage word count | 500 |
+| `BETWEENNESS_WEIGHT` | Betweenness centrality weight in topology score | 0.6 |
+| `EDGE_WEIGHT_SUM_WEIGHT` | Edge weight sum contribution in topology score | 0.4 |
+| `EDGE_WEIGHT_CAP` | log1p cap for edge weight normalization | 50 |

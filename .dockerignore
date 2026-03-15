@@ -1,0 +1,33 @@
+# Python
+__pycache__
+*.pyc
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+
+# Node
+node_modules
+.svelte-kit
+build
+.storybook
+
+# Project
+.omc
+.git
+.cursor
+.playwright-mcp
+e2e
+tests
+docs
+*.md
+!README.md
+
+# IDE
+.vscode
+.idea
+
+# Env
+.env
+.env.*
+!.env.example

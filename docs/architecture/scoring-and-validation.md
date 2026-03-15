@@ -4,6 +4,23 @@
 
 Validators evaluate miner quality across four dimensions — traversal accuracy, narrative quality, graph topology, and corpus integrity — then set normalised weights on the Bittensor chain. Yuma Consensus aggregates weights from all validators to determine miner emission.
 
+### Scoring Architecture: Two Distinct Layers
+
+It is important to distinguish two separate concerns:
+
+1. **Raw score computation** (`subnet/reward.py`): Four axes produce per-miner scores in [0, 1] for each hop. These are the scoring functions used during the epoch loop.
+
+2. **Emission weight computation** (`subnet/emissions.py`): Three emission pools combine raw scores into the final weight vector for `set_weights()`, each with a different normalization strategy:
+   - TraversalPool (50%) — linear normalization of `traversal_score * traversal_count`
+   - QualityPool (30%) — softmax over `quality_score`
+   - TopologyPool (20%) — rank normalization of `topology_score`
+
+   Corpus score is **not** a pool — it is a binary gate: `corpus_score == 0.0` collapses the miner's combined weight to `1e-6` regardless of pool performance.
+
+The 0.40/0.30/0.15/0.15 sub-score weights in `reward.py` describe how each raw axis score is computed internally. The 50%/30%/20% pool shares in `subnet/config.py` describe how those raw scores map to emission. These are two separate layers.
+
+> **Implementation status:** The pool and gate architecture in `subnet/emissions.py` is fully implemented. The validator scoring loop that calls `reward.py` and feeds `EmissionCalculator` is currently a skeleton (TODO). Wiring the live epoch loop to `set_weights()` is Phase 1 MVP work.
+
 ---
 
 ## Validator Class
@@ -172,28 +189,34 @@ topology = 0.6 * min(betweenness, 1.0)
 - **Betweenness centrality** (60%) — computed via Brandes' algorithm (O(VE)), suitable for graphs up to approximately 500 nodes. Rewards miners whose nodes bridge distinct clusters.
 - **Outgoing edge weight sum** (40%) — soft-capped via `log1p` to prevent a small number of heavy edges from dominating.
 
-### 4. Corpus Score (weight: 0.15)
+### 4. Corpus Score (gate, not a pool)
 
 A corpus challenge verifies Merkle root stability.
 
 The validator re-queries the miner using the reserved key `__corpus_challenge__` and checks whether the returned Merkle proof matches the root stored on-chain via `set_commitment()`. A stable root indicates the miner is serving a consistent, unchanged corpus.
 
-**Penalty:** Miners that fail corpus challenges receive a corpus score of 0.0, which heavily drags down their combined weight → zero emission → eventual deregistration. This replaces native slashing (which Bittensor does not support).
+**Corpus score is a binary gate, not a weighted emission contributor.** In `EmissionCalculator.compute()`, if `corpus_score == 0.0` the miner's combined weight is set to `1e-6` — overriding all pool scores entirely. A miner scoring perfectly on traversal, quality, and topology still receives near-zero emission if it fails corpus integrity. This replaces native slashing (which Bittensor does not support).
 
 ---
 
-## Score Combination
+## Score Combination and Emission Weights
 
-After normalisation, the four sub-scores are combined with configurable weights:
+The four raw sub-scores feed into `subnet/emissions.py` via `MinerScoreSnapshot`. Each pool applies a different normalization strategy across all miners before combining:
 
 ```
-final = TRAVERSAL_WEIGHT * traversal      # 0.40
-      + QUALITY_WEIGHT   * quality         # 0.30
-      + TOPOLOGY_WEIGHT  * topology        # 0.15
-      + CORPUS_WEIGHT    * corpus          # 0.15
+# EmissionCalculator.compute() — subnet/emissions.py
+t_weight   = linear_normalise(traversal_score * traversal_count)  # TraversalPool 50%
+q_weight   = softmax(quality_score)                                # QualityPool   30%
+top_weight = rank_normalise(topology_score)                        # TopologyPool  20%
+
+combined = 0.50 * t_weight + 0.30 * q_weight + 0.20 * top_weight
+
+# Corpus gate — not a pool
+if corpus_score == 0.0:
+    combined = 1e-6  # near-zero emission → eventual deregistration
 ```
 
-The result is a mapping of `uid → final_score` that becomes the weight vector for `set_weights()`.
+The final combined scores are L1-normalized and become the weight vector for `set_weights()`. The result is a mapping of `uid → weight` that Yuma Consensus uses to distribute the 41% miner emission share.
 
 ---
 

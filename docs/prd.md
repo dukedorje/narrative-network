@@ -90,8 +90,8 @@ Acceptance criteria:
 | Component | Role | Resources | Key Module |
 |-----------|------|-----------|------------|
 | Gateway VM | Internet-facing API, session ownership | FastAPI + sentence-transformers | `orchestrator/gateway.py` |
-| Domain Miner | Corpus retrieval, Merkle proofs | ~2 vCPU, 4GB, ChromaDB | `domain/miner.py` |
-| Narrative Miner | Passage authoring, choice cards | ~4 vCPU, 16GB, GPU opt. | (narrative miner module) |
+| Domain Miner | Corpus retrieval, Merkle proofs | ~2 vCPU, 4GB RAM | `domain/miner.py`, `domain/corpus.py` |
+| Narrative Miner | Passage authoring, choice cards | ~2 vCPU, 4GB RAM (OpenRouter, no GPU) | `domain/narrative/miner.py` |
 | Validator | Scoring, weight commit, graph maintenance | ~8 vCPU, 32GB | `subnet/validator.py` |
 | Graph Store | Edge weights, centrality, traversal logs | KuzuDB + in-memory | `subnet/graph_store.py` |
 | Subtensor | UID registry, stake, emission | Bittensor chain | finney / local testnet |
@@ -102,7 +102,7 @@ Three message types (see `subnet/protocol.py`):
 
 1. **KnowledgeQuery** — Retrieval synapse. Orchestrator broadcasts to all miners on entry; validators use for scoring and corpus challenges.
 2. **NarrativeHop** — Traversal synapse. Core game loop. Destination node's miners compete to author the best passage.
-3. **WeightCommit** — Internal validator structure for BFT weight agreement before set_weights.
+3. **WeightCommit** — Internal validator dataclass for accumulating scores before set_weights. Not transmitted over the network.
 
 ### 3.3 Data Flow
 
@@ -124,19 +124,24 @@ Validator (per epoch):
 
 ### 4.1 Pool Distribution
 
-| Pool | Share | Recipients |
-|------|-------|------------|
-| Traversal | 45% | Winning Domain (35%) + Narrative (65%) miners per hop |
-| Quality | 30% | Validators (66.7%) + top-quartile miners (33.3%) |
-| Topology | 15% | All live nodes by betweenness centrality |
-| Proposal Reserve | 10% | Bond returns + governance |
+Three emission pools shape the miner weight vector submitted to Yuma Consensus. Each uses a different normalization strategy (see `subnet/emissions.py`):
+
+| Pool | Share | Normalization | What it rewards |
+|------|-------|---------------|-----------------|
+| TraversalPool | 50% | Linear | High-traffic, high-relevance nodes (`traversal_score * traversal_count`) |
+| QualityPool | 30% | Softmax | Competitive narrative quality scores |
+| TopologyPool | 20% | Rank-based | Structurally important bridge nodes |
+
+**Corpus integrity** is not a pool — it is a binary gate. `corpus_score == 0.0` collapses the miner's combined weight to `1e-6` regardless of pool performance.
+
+**There is no separate reserve pool.** The protocol's 18% owner share (fixed by dTAO) funds proposal bond returns and operations.
 
 ### 4.2 Key Economic Properties
 
-- **Quality compounding:** Higher scores → more session wins → more TAO → better infrastructure → higher scores. Intentional convexity.
-- **Structural rewards:** Bridge nodes earn topology pool from day one, independent of traffic volume. The answer to "how do new miners compete?"
-- **Validator stability:** 30% of emission at stake for consistent, honest scoring.
-- **Proposal reserve:** Net-zero over time. Successful bonds return 1.05x, lapsed return 95%, slashed go to detecting validators.
+- **Quality compounding:** Higher scores → more session wins → more TAO → better infrastructure → higher scores. Softmax in QualityPool sharpens this effect at the top of the distribution.
+- **Structural rewards:** Bridge nodes earn TopologyPool rewards from day one, independent of traffic volume. The answer to "how do new miners compete?"
+- **Corpus enforcement:** Corpus fraud collapses emission to near-zero, overriding all pool scores — the primary anti-fraud mechanism.
+- **No separate validator pool:** Validators earn from the protocol's 41% validator+staker share via Yuma Consensus bond mechanism, not from a custom emission pool.
 
 ---
 
@@ -198,11 +203,11 @@ Proposal bonds locked via Alkahest escrow contracts. Multi-validator arbiter com
 |------------|---------|--------|
 | Bittensor SDK | Synapse transport, metagraph, subtensor | Required |
 | KuzuDB | Graph persistence | Optional (in-memory fallback) |
-| ChromaDB | Miner corpus vector store | Required for domain miners |
 | sentence-transformers | Embedding (768-dim) | Required for gateway + validators |
-| vLLM / HuggingFace | Narrative generation | Required for narrative miners |
+| OpenRouter API | Narrative generation (OpenAI-compatible) | Required for narrative miners (no GPU needed) |
 | IPFS (Kubo) | Manifest + centroid storage | Required for registration |
-| Redis | Session cache (multi-instance) | Planned (in-memory fallback) |
+| Redis | Session cache (multi-instance) | Implemented (in-memory fallback available) |
+| Kubernetes | Container orchestration | Manifests in `k8s/` (Kustomize) |
 | Prometheus + Grafana | Observability | Recommended |
 | bonfires.ai | Initial knowledge graph bootstrap | Integration planned |
 | Arkhai/Alkahest | Settlement layer | Integration planned |
@@ -217,22 +222,24 @@ Proposal bonds locked via Alkahest escrow contracts. Multi-validator arbiter com
 - [ ] 3+ domain miner nodes with real corpora
 - [ ] 1+ narrative miner per domain node
 - [ ] 1+ validator running full scoring loop
-- [ ] Gateway serving /enter and /hop over REST
-- [ ] Graph store with edge weight updates and decay
+- [x] Gateway serving /enter and /hop over REST (`orchestrator/gateway.py`)
+- [x] Graph store with edge weight updates and decay (`subnet/graph_store.py`)
+- [x] Emission model implementation (3 pools + corpus gate) (`subnet/emissions.py`)
+- [x] Orchestrator session management (`orchestrator/`)
 - [ ] Basic proposal flow (propose → vote → integrate)
 - [ ] End-to-end traversal demo: soul token → entry → 5 hops → terminal
+- [ ] Local testnet integration testing (all components wired together)
 
 ### Phase 2 — Finney Testnet
 
 - [ ] Deploy to Bittensor finney testnet
 - [ ] Miner registration via IPFS manifests
 - [ ] Corpus integrity challenges (Merkle verification)
-- [ ] BFT weight commit quorum
 - [ ] WebSocket streaming for real-time hop delivery
 - [ ] Session persistence in Redis
 - [ ] Semantic drift detection
 - [ ] Integration bridge window with foreshadowing
-- [ ] Emission model implementation (3 pools + reserve)
+- [ ] Emission model wired to scoring loop and set_weights() (3 pools + corpus gate)
 
 ### Phase 3 — Mainnet + bonfires.ai Integration
 
@@ -259,10 +266,10 @@ Proposal bonds locked via Alkahest escrow contracts. Multi-validator arbiter com
 ## 9. Open Questions
 
 1. **Knowledge graph bootstrap:** What is the initial node set? How many domains for MVP? What corpora seed them?
-2. **Narrative miner model:** Which LLM base? Fine-tuned per domain or general with persona prompting?
-3. **Embedding model:** sentence-transformers default is 768-dim. Confirm this is sufficient for domain discrimination.
-4. **Validator hardware:** 8 vCPU / 32GB baseline. Is GPU needed for re-embedding at scale?
-5. **Epoch length:** How many blocks? Trade-off between scoring freshness and computational cost.
+2. **Narrative miner model:** Which LLM base? Fine-tuned per domain or general with persona prompting? — **Resolved: OpenRouter API with configurable model (default mistral-7b-instruct). Persona prompting, not fine-tuning.**
+3. **Embedding model:** sentence-transformers default is 768-dim. Confirm this is sufficient for domain discrimination. — **Confirmed: sentence-transformers/all-mpnet-base-v2, 768-dim.**
+4. **Validator hardware:** 8 vCPU / 32GB baseline. Is GPU needed for re-embedding at scale? — **No GPU needed. Validators re-embed with CPU-based sentence-transformers.**
+5. **Epoch length:** How many blocks? Trade-off between scoring freshness and computational cost. — **360 blocks (~72 minutes at 12s/block) configured in SubnetConfig.**
 6. **Quality scoring evolution:** When does word-count heuristic get replaced with embedding-based coherence? What's the evaluation metric?
 7. **Alkahest integration depth:** Full escrow for every traversal credit, or batch settlement per epoch?
 8. **bonfires.ai integration:** API contract? Data format? Sync frequency?
@@ -286,5 +293,6 @@ Proposal bonds locked via Alkahest escrow contracts. Multi-validator arbiter com
 | Emission Model | `docs/architecture/emission-model.md` | Three pools, formulas, economic properties |
 | Incentive Alignment | `docs/economics/incentive-alignment.md` | Game theory, attack vectors, compounding |
 | Arkhai/Alkahest Protocol | `docs/protocols/arkhai-alkahest.md` | Settlement layer integration |
+| Goals | `docs/goals.md` | Current status and milestone tracking |
 | Game Engine (Future) | `docs/future/game-engine.md` | Simulation reframe, entities, emergent lore |
 | Player Dashboard (Future) | `docs/future/player-dashboard.md` | Traversal ledger, epoch settlement, folio |

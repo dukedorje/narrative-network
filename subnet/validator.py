@@ -28,8 +28,8 @@ from subnet.reward import score_corpus, score_quality, score_topology, score_tra
 class Validator:
     """Top-level validator runtime."""
 
-    def __init__(self, config: bt.config | None = None):
-        self.config = config or bt.config()
+    def __init__(self, config: bt.Config | None = None):
+        self.config = config or bt.Config()
         self.wallet = bt.Wallet(config=self.config)
         self.subtensor = bt.Subtensor(config=self.config)
         self.metagraph = self.subtensor.metagraph(NETUID)

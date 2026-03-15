@@ -41,11 +41,11 @@ The Narrative Network is composed of six distinct layers. Traffic originates at 
                                       ▼                      ▼
              ┌────────────────────────────┐    ┌─────────────────────────────────┐
              │     Domain Miner × N       │    │      Narrative Miner × N        │
-             │  Chroma vector store       │    │   vLLM  |  lore context store   │
+             │  numpy corpus search       │    │   OpenRouter API  |  Redis session store   │
              │  corpus chunks             │    │   persona  |  path context      │
              │  KnowledgeQuery handler    │    │   NarrativeHop handler          │
              │  Merkle proof endpoint     │    │                                 │
-             │  domain/miner.py           │    │   (same VM class, GPU optional) │
+             │  domain/miner.py           │    │   (lightweight — OpenRouter, no GPU) │
              │  domain/manifest.py        │    │                                 │
              └────────────┬───────────────┘    └──────────────┬──────────────────┘
                           │                                   │
@@ -106,14 +106,14 @@ The Gateway is the only internet-facing component. All inter-component communica
 **Purpose:** Corpus retrieval and Merkle proof service. One VM per registered node ID.
 
 **Key responsibilities:**
-- Load domain corpus chunks into Chroma vector store at startup
+- Load domain corpus from .txt/.md files via CorpusLoader. Chunks embedded with SentenceTransformer, searched via numpy cosine similarity (no vector DB)
 - Compute and cache domain centroid embedding from corpus
 - Register domain manifest on-chain via `domain/manifest.py` (node ID, corpus CID, centroid, persona hash)
 - Handle `KnowledgeQuery` synapses: embed query, cosine-rank chunks, return top-k with similarity scores
 - Serve chunk-by-hash endpoint for validator Merkle challenges (corpus integrity proofs)
 - Maintain Merkle tree over corpus chunk hashes for fraud proofs
 
-**Modules:** `domain/miner.py`, `domain/manifest.py`, `subnet/protocol.py`
+**Modules:** `domain/miner.py`, `domain/corpus.py`, `domain/manifest.py`, `subnet/protocol.py`
 
 **Resources:** ~2 vCPU, 4 GB RAM, no GPU required
 
@@ -126,15 +126,15 @@ The Gateway is the only internet-facing component. All inter-component communica
 **Purpose:** Mutation generator. Produces competing narrative passages and branch choices on each traversal hop.
 
 **Key responsibilities:**
-- Run a language model via vLLM, fine-tuned or prompted to the domain's narrative persona
-- Maintain per-session lore context store (path history, prior passages, persona state)
+- Call OpenRouter API (OpenAI-compatible) with persona-specific prompts. No local model hosting or GPU required.
+- Maintain per-session narrative context via Redis session store (with in-memory fallback)
 - Handle `NarrativeHop` synapses: assemble prompt from persona, traversal path, retrieved chunks, and destination domain context
 - Generate: (1) narrative passage, (2) set of branch choices pointing to adjacent live nodes, (3) knowledge synthesis embedding
 - Compete with other miners registered to the same node — the validator scores all responses comparatively
 
-**Modules:** `subnet/protocol.py` (NarrativeHop synapse definition)
+**Modules:** `domain/narrative/miner.py`, `domain/narrative/prompt.py`, `domain/narrative/session_store.py`, `subnet/protocol.py`
 
-**Resources:** ~4 vCPU, 16 GB RAM; GPU optional but strongly improves throughput and coherence
+**Resources:** ~2 vCPU, 2 GB RAM; no GPU required (OpenRouter handles inference)
 
 **Note:** Domain Miner and Narrative Miner may run on the same VM for smaller operators. The split is a logical separation; the subnet protocol does not enforce physical separation.
 
@@ -163,7 +163,7 @@ The Gateway is the only internet-facing component. All inter-component communica
 | Service | Role | Notes |
 |---|---|---|
 | **KùzuDB** | Graph database — edge weights, traversal history, node embeddings, path decay | Accessed by validators and Gateway; `subnet/graph_store.py` wraps the client |
-| **Redis** | Session cache — active session state, soul token embeddings, current node, path history | Gateway-owned; TTL-keyed by session ID |
+| **Redis** | Session cache — active session state, soul token embeddings, current node, path history. Session narrative context for narrative miners (7-day TTL) | Gateway-owned; TTL-keyed by session ID |
 | **IPFS node** | Content-addressed corpus storage — domain manifest CIDs, chunk hashes | Miners publish manifests here; validators fetch for Merkle challenges |
 | **Prometheus / Grafana** | Metrics and alerting — synapse latency, scoring throughput, weight commit lag, session count | Scraped from all VMs |
 
@@ -312,7 +312,7 @@ class KnowledgeQuery(bt.Synapse):
     corpus_hash: str                   # current Merkle root of miner's corpus
 ```
 
-Validators use `corpus_hash` to issue Merkle challenges against the miner's chunk-by-hash endpoint. Miners that return chunks inconsistent with their registered manifest hash are penalized.
+Validators use `corpus_hash` to issue Merkle challenges against the miner's chunk-by-hash endpoint. Miners that return chunks inconsistent with their registered manifest hash receive `corpus_score == 0.0` and are collapsed to near-zero emission.
 
 ### 5.2 NarrativeHop
 
@@ -397,7 +397,7 @@ Betweenness centrality is computed over the current edge-weight graph in `subnet
 
 ## 7. Graph Store and Memory
 
-Implemented in `subnet/graph_store.py`, backed by KùzuDB.
+Implemented in `subnet/graph_store.py`. The graph store is in-memory with optional KùzuDB persistence — when KùzuDB is unavailable the store operates entirely in-memory. Redis is not used for graph state; Redis is exclusively for gateway session records and narrative miner session context.
 
 ### 7.1 Schema
 
@@ -491,19 +491,22 @@ The topology is emergent: it is the network's collectively-attested theory of ho
 
 ### 9.1 Deployment Model
 
-The subnet is deployed via **Nomad** (default) or Kubernetes, depending on operator preference. Each VM archetype has a corresponding job/deployment definition.
+The subnet is deployed via **Kubernetes** using Kustomize manifests in the `k8s/` directory. Each component has a corresponding Deployment or StatefulSet.
 
-**Nomad job structure:**
 ```
-narrative-network/
-  jobs/
-    gateway.hcl          -- single Gateway instance; update strategy = rolling
-    domain-miner.hcl     -- parameterized job; one allocation per node_id
-    narrative-miner.hcl  -- parameterized job; one allocation per node_id
-    validator.hcl        -- M instances; anti-affinity to spread across hosts
-    graph-db.hcl         -- KùzuDB; sticky to one host, volume mount required
-    redis.hcl            -- Redis; co-located with Gateway or dedicated host
-    ipfs.hcl             -- IPFS daemon; any host with persistent storage
+k8s/
+  namespace.yaml
+  configmap.yaml
+  secrets.yaml
+  gateway.yaml          -- Deployment + HPA (2-5 replicas)
+  validator.yaml         -- StatefulSet with PVC for KuzuDB
+  domain-miner.yaml      -- Deployment with PVC for corpus
+  narrative-miner.yaml   -- Deployment (lightweight, no GPU)
+  frontend.yaml          -- Deployment (2 replicas)
+  redis.yaml             -- StatefulSet with PVC
+  ipfs.yaml              -- StatefulSet with PVC
+  ingress.yaml           -- Host-based routing + TLS
+  kustomization.yaml
 ```
 
 ### 9.2 Autoscaling
@@ -512,7 +515,7 @@ narrative-network/
 
 **Domain Miners:** Do not autoscale on traffic — one instance per `node_id` is canonical. Operators add new Domain Miner instances by registering new node IDs with new manifests. Multiple operators may register miners for the same `node_id` (they compete comparatively; only the top-ranked earns full emission).
 
-**Narrative Miners:** Same topology as Domain Miners — one canonical instance per `node_id`, with multiple competing instances possible. GPU-equipped instances have a natural coherence advantage and will score higher under sustained load.
+**Narrative Miners:** Same topology as Domain Miners — one canonical instance per `node_id`, with multiple competing instances possible. No GPU is required; all inference is delegated to the OpenRouter API.
 
 **Validators:** Fixed count determined by network stake distribution. Validator count does not autoscale; new validators join by staking and registering on Subtensor.
 
@@ -523,11 +526,11 @@ Each component exposes a `/health` endpoint:
 | Component | Liveness check | Readiness check |
 |---|---|---|
 | Gateway | Process alive | Redis connected + metagraph loaded |
-| Domain Miner | Process alive | Chroma loaded + centroid computed |
-| Narrative Miner | Process alive | vLLM model loaded + lore context store warm |
+| Domain Miner | Process alive | Corpus loaded + centroid computed |
+| Narrative Miner | Process alive | OpenRouter reachable + session store connected |
 | Validator | Process alive | KùzuDB connected + bt node synced |
 
-Nomad/K8s restarts unhealthy allocations automatically. The Gateway's readiness check specifically blocks traffic until the metagraph is loaded — preventing routing to stale or empty UID lists during cold starts.
+Kubernetes restarts unhealthy pods automatically. The Gateway's readiness check specifically blocks traffic until the metagraph is loaded — preventing routing to stale or empty UID lists during cold starts.
 
 ### 9.4 Rolling Updates
 
@@ -571,7 +574,7 @@ Redis is not used for inter-validator coordination. Validators are independent a
 
 Content-addressed storage for domain manifests and corpus chunks. Miners publish corpus chunks and their manifest to the local IPFS node on registration; the node pins and propagates to the network.
 
-Validators fetch manifests by CID when performing Merkle challenges. The IPFS node is not on the hot path for session requests — corpus access during `KnowledgeQuery` is served directly from the miner's local Chroma store.
+Validators fetch manifests by CID when performing Merkle challenges. The IPFS node is not on the hot path for session requests — corpus access during `KnowledgeQuery` is served directly from the miner's in-memory numpy corpus index.
 
 ### 10.4 Prometheus / Grafana
 
@@ -650,8 +653,20 @@ A rolling attestation window in `subnet/validator.py` detects sustained quality 
 | `orchestrator/gateway.py` | Gateway | FastAPI application, synapse dispatch, response selection, streaming |
 | `orchestrator/session.py` | Gateway | Session record creation, Redis I/O, continuity invariant enforcement |
 | `evolution/proposal.py` | Validator | Node proposal, voting, incubation, integration, and pruning state machine |
-| `domain/miner.py` | Domain Miner | Chroma store management, `KnowledgeQuery` handler, chunk-by-hash endpoint |
+| `domain/miner.py` | Domain Miner | Corpus loader, numpy search, Merkle proofs, `KnowledgeQuery` handler, chunk-by-hash endpoint |
+| `domain/corpus.py` | Domain Miner | CorpusLoader, MerkleProver, chunk embedding and Merkle tree |
 | `domain/manifest.py` | Domain Miner | `DomainManifest` dataclass, IPFS publish, Merkle tree construction |
+| `domain/narrative/miner.py` | Narrative Miner | OpenRouter-backed hop generation, session persistence |
+| `domain/narrative/prompt.py` | Narrative Miner | Persona catalogue, prompt assembly for hop generation |
+| `domain/narrative/session_store.py` | Narrative Miner | Redis session store with in-memory fallback |
+| `subnet/emissions.py` | Validator | Three emission pools, EmissionCalculator, weight vector computation |
+| `subnet/metagraph_watcher.py` | Validator, Gateway | Async metagraph poller, AxonCache, registration events |
+| `orchestrator/router.py` | Gateway | Entry-node ranking, narrative miner resolution |
+| `orchestrator/embedder.py` | Gateway | SentenceTransformer wrapper for query/passage embedding |
+| `orchestrator/safety_guard.py` | Gateway | Path cycle prevention, word count enforcement |
+| `evolution/voting.py` | Validator | Stake-weighted voting engine, quorum/approval tally |
+| `evolution/pruning.py` | Validator | Three-phase pruning state machine (warning/decay/collapse) |
+| `evolution/integration.py` | Validator | Three-phase node onboarding (foreshadow/bridge/go-live) |
 
 ---
 
