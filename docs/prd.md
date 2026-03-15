@@ -53,8 +53,8 @@ Acceptance criteria:
 Acceptance criteria:
 - Run epoch scoring loop: sample challenge pairs, issue KnowledgeQuery + NarrativeHop challenges
 - Score on four axes: traversal (cosine similarity + latency), quality (word-count heuristic, future: embedding coherence), topology (betweenness centrality + edge weight), corpus integrity (Merkle stability)
-- Broadcast weight commit hash to peer validators, achieve BFT quorum
-- Call subtensor.set_weights with normalised scores
+- Call `subtensor.set_weights()` independently (SDK v10 API, `mechid=0`); Yuma Consensus aggregates across validators
+- Commit-reveal v4 (Drand time-lock encryption) prevents weight copying when `CommitRevealWeightsEnabled = True`
 - Apply edge decay after each epoch
 - Detect semantic drift (centroid divergence over time)
 
@@ -114,7 +114,7 @@ User (soul token) → Gateway (embed, route) → KnowledgeQuery (broadcast)
 
 Validator (per epoch):
   → Sample challenges → Score (traversal + quality + topology + corpus)
-  → Broadcast WeightCommit → BFT quorum → subtensor.set_weights
+  → subtensor.set_weights() (each validator independently; Yuma Consensus aggregates)
   → graph_store.decay_edges
 ```
 

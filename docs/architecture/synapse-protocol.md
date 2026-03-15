@@ -7,7 +7,7 @@
 
 ## Overview
 
-The wire protocol defines three named synapse types used across the subnet. Two are `bt.Synapse` subclasses transmitted over Bittensor's axon/dendrite transport: `KnowledgeQuery` and `NarrativeHop`. The third, `WeightCommit`, is an internal validator data structure — never transmitted as a synapse — used to construct and commit weight updates via BFT quorum.
+The wire protocol defines two `bt.Synapse` subclasses transmitted over Bittensor's axon/dendrite transport: `KnowledgeQuery` and `NarrativeHop`. A third structure, `WeightCommit`, is an internal validator dataclass used to accumulate scores before calling `subtensor.set_weights()` — it is never transmitted as a synapse.
 
 **Design constraints:**
 
@@ -102,7 +102,7 @@ This is the core game-loop synapse. It is fired each time a player selects a cho
 
 ---
 
-## Synapse 3: WeightCommit (internal validator structure)
+## Internal Structure: WeightCommit (not a synapse)
 
 `WeightCommit` is **not** a `bt.Synapse`. It is a pure Python dataclass used internally by the validator to accumulate, normalise, and commit miner weight updates. It is never placed on the axon transport.
 
@@ -124,11 +124,11 @@ Scales all values in `miner_scores` so they sum to 1.0. Called before `to_arrays
 
 **`to_arrays() -> tuple[list[int], list[float]]`**
 
-Returns `(uids, weights)` as parallel lists suitable for passing directly to `subtensor.set_weights()`.
+Returns `(uids, weights)` as parallel lists suitable for passing directly to `subtensor.set_weights()` (SDK v10 API).
 
-### BFT Quorum
+### No Custom Quorum Required
 
-Before calling `set_weights()`, the validator hashes the serialised `WeightCommit` and broadcasts that hash to peer validators over the subnet's inter-validator channel. A Byzantine Fault Tolerant quorum of peer confirmations is required before the commit proceeds. This prevents a single compromised validator from unilaterally distorting the weight distribution.
+Each validator independently calls `set_weights()` after scoring. Yuma Consensus provides Byzantine fault tolerance at the protocol level — it clips outlier weights via κ-majority threshold and penalizes deviating validators through the bond mechanism. With `CommitRevealWeightsEnabled = True`, weights are automatically encrypted via Drand time-lock encryption and revealed after `CommitRevealPeriod` tempos, preventing weight copying.
 
 ---
 
@@ -181,22 +181,22 @@ sequenceDiagram
     O->>P: render narrative_passage + choice_cards[]
 ```
 
-### Validator Scoring and Weight Commit
+### Validator Scoring and Weight Setting
 
 ```mermaid
 sequenceDiagram
     participant V as Validator
-    participant PV as Peer Validators
     participant ST as Subtensor
+    participant YC as Yuma Consensus
 
     V->>V: accumulate miner_scores across epoch sessions
     V->>V: WeightCommit.normalise() -- scale to sum 1.0
-    V->>V: hash serialised WeightCommit
-    V->>PV: broadcast commit hash (inter-validator channel)
-    PV-->>V: quorum confirmations
-    V->>V: check BFT quorum threshold met
     V->>V: WeightCommit.to_arrays() -> (uids, weights)
-    V->>ST: subtensor.set_weights(uids, weights)
+    V->>ST: subtensor.set_weights(uids, weights, mechid=0)
+    ST->>ST: Drand time-lock encrypt (if commit-reveal enabled)
+    ST->>ST: auto-reveal after CommitRevealPeriod tempos
+    YC->>YC: aggregate all validator weights via κ-majority consensus
+    YC->>YC: compute emission distribution
 ```
 
 ---
@@ -214,4 +214,4 @@ sequenceDiagram
 | Passage length | `narrative_passage` targets 200–400 tokens, second-person present tense. |
 | Synthesis length | `knowledge_synthesis` max 600 chars; grounded in `retrieved_chunks`. |
 | Path depth | `player_path` max 50 nodes; older entries may be truncated by orchestrator before sending. |
-| Weight commit | `WeightCommit` is never transmitted as a synapse. BFT quorum required before `set_weights()`. |
+| Weight commit | `WeightCommit` is never transmitted as a synapse. Each validator calls `set_weights()` independently; Yuma Consensus aggregates. |

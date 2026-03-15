@@ -7,10 +7,10 @@ Knowledge graph nodes in the Narrative Network pass through a defined sequence o
 ```
 Proposed --> Voting --> Incubating --> Integrating --> Live --> Pruned
                 |
-                +--> (slash / withdrawal) --> re-proposal required
+                +--> (forfeit / withdrawal) --> re-proposal required
 ```
 
-A node moves forward through the pipeline only when each phase's criteria are satisfied. Backward transitions are not permitted; a failed or slashed node must re-enter the pipeline as a new proposal.
+A node moves forward through the pipeline only when each phase's criteria are satisfied. Backward transitions are not permitted; a failed or forfeited node must re-enter the pipeline as a new proposal.
 
 ---
 
@@ -57,8 +57,8 @@ UPDATE_META
 
 Once validation passes:
 
-1. The bond is transferred to `BOND_ESCROW_ADDRESS` via `subtensor.transfer`.
-2. A commitment hash (hash of the canonical payload, not the full payload) is written on-chain via `subtensor.commit`.
+1. The bond is locked via Alkahest escrow on its existing L2 deployment, or held off-chain by the subnet owner for MVP.
+2. A commitment hash (hash of the canonical payload, not the full payload) is written on-chain via `subtensor.set_commitment()` (SDK v10 API).
 3. Full metadata is pinned to IPFS.
 
 ---
@@ -84,7 +84,9 @@ Validators may attach embedding summaries of their quality assessment to their b
 
 ### Failure Modes
 
-If a proposal fails to reach quorum, is rejected, or is withdrawn by the proposer, the bond may be slashed. A slashed or withdrawn proposal cannot resume — the miner must submit a new proposal from the beginning.
+If a proposal fails to reach quorum, is rejected, or is withdrawn by the proposer, the bond may be forfeited (managed by the subnet owner or Alkahest arbiter). A forfeited or withdrawn proposal cannot resume — the miner must submit a new proposal from the beginning.
+
+Note: Bittensor has no native slashing. Bond forfeiture is managed off-chain or via Alkahest escrow contracts, not at the protocol level.
 
 ---
 

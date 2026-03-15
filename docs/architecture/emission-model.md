@@ -1,201 +1,261 @@
 # Emission Model
 
-This document specifies the TAO emission model for Narrative Network (Bittensor subnet 42). Emission is the economic engine that aligns miner, validator, and governance incentives with the subnet's structural goals.
+This document specifies how Narrative Network (Bittensor subnet 42) uses its validator weight-setting to distribute miner emissions. Under Dynamic TAO (dTAO), the protocol enforces a fixed emission split — our role is to set weights that direct the miner share toward the behaviors we want to incentivize.
 
 ---
 
-## Epoch Emission Split
+## Protocol-Enforced Emission Split (dTAO)
 
-Total epoch emission `E_epoch` is determined by the subnet's registered share of the Bittensor network emission schedule. The root network's Yuma consensus assigns this share based on validator registration and activity. The emission model treats `E_epoch` as an input — the outer loop is handled by the root network.
+The Bittensor protocol distributes each subnet's emission per tempo as follows:
 
-| Pool | Share | Recipient |
-|------|-------|-----------|
-| Traversal pool | 45% | Domain + Narrative miners on traversed nodes |
-| Quality pool | 30% | Validators (20%) + top-scoring miners (10%) |
-| Topology pool | 15% | All live nodes, weighted by betweenness centrality |
-| Proposal reserve | 10% | Locked; disbursed as returned bonds + governance |
+| Recipient | Share | Our Control |
+|-----------|-------|-------------|
+| Subnet Owner | 18% | Fixed by protocol. Funds operations, proposal reserve, development. |
+| Miners | 41% | Distributed by Yuma Consensus based on **our validator weight assignments**. |
+| Validators + Stakers | 41% | Distributed by bond/dividend mechanism. Validators earn by setting accurate weights. |
 
-Within each pool, the Domain/Narrative miner split is:
-
-| Pool | Domain miner | Narrative miner |
-|------|-------------|-----------------|
-| Traversal pool | 35% | 65% |
-| Quality bonus | 25% | 75% |
-
-Narrative miners carry the heavier creative and synthesis burden, so they receive the larger share of per-hop and quality rewards. Domain miners earn a stable base reflecting corpus maintenance work.
+**We do not control the split.** We control how the 41% miner share is distributed among miners by setting weights. The weights we assign are the emission model.
 
 ---
 
-## Traversal Pool (45%)
+## Weight-Setting Strategy: Four Scoring Axes
 
-For each completed `NarrativeHop` in an epoch, only the miner selected by the orchestrator for the actual session earns the traversal credit — runners-up do not. Each hop is weighted by its `quality_score` relative to the epoch total.
+Our validators compute a combined score per miner UID. This score becomes the weight set via `subtensor.set_weights()`. The four axes determine how the 41% miner emission is distributed:
+
+| Axis | Weight | Purpose | Equivalent to |
+|------|--------|---------|---------------|
+| Traversal quality | 0.40 | Reward relevant chunk retrieval and passage groundedness | Traversal pool |
+| Narrative quality | 0.30 | Reward coherent, well-synthesized narrative passages | Quality bonus |
+| Topology importance | 0.15 | Reward structurally important bridge nodes | Topology pool |
+| Corpus integrity | 0.15 | Penalize inconsistent or fraudulent corpora | Integrity enforcement |
 
 ```python
-def traversal_pool_epoch(hops, E_epoch, TRAVERSAL_SHARE=0.45, DOMAIN_SPLIT=0.35):
-    pool = E_epoch * TRAVERSAL_SHARE
-    domain_pool = pool * DOMAIN_SPLIT
-    narrative_pool = pool * (1 - DOMAIN_SPLIT)
-    total_quality = sum(h.quality_score for h in hops) or 1.0
-    rewards = {}
-    for hop in hops:
-        w = hop.quality_score / total_quality
-        rewards[hop.domain_miner_uid] = rewards.get(hop.domain_miner_uid, 0) + domain_pool * w
-        rewards[hop.narrative_miner_uid] = rewards.get(hop.narrative_miner_uid, 0) + narrative_pool * w
-    return rewards
+final_weight = (
+    0.40 * traversal_score +
+    0.30 * quality_score +
+    0.15 * topology_score +
+    0.15 * corpus_score
+)
 ```
 
-`hops` is the list of all completed hops in the epoch. Each hop carries:
-- `quality_score` — validator-assigned score for this hop
-- `domain_miner_uid` — the miner serving the node's corpus
-- `narrative_miner_uid` — the miner that generated the narrative transition
+Within each axis, domain miners and narrative miners compete for the same weight allocation. The scoring naturally favors the miner type doing the relevant work:
 
-Key insight: quality-weighting inside the traversal pool means high-quality nodes on high-traffic paths compound rewards. A miner improving average score from 0.65 to 0.80 on a well-traversed node earns significantly more than the absolute score increase suggests.
+- **Traversal quality**: Domain miners score higher (they serve the chunks being evaluated)
+- **Narrative quality**: Narrative miners score higher (they generate the passages)
+- **Topology importance**: Both benefit equally from structural position
+- **Corpus integrity**: Domain miners are primarily affected (they commit Merkle roots)
+
+### mechid Consideration
+
+SDK v10 supports `mechid` — subnets can run up to 2 independent incentive mechanisms. We may use:
+- `mechid=0`: Combined scoring (default, described above)
+- `mechid=1`: Future — separate narrative-only scoring track
+
+For MVP, a single mechanism (`mechid=0`) with the combined four-axis score is sufficient.
 
 ---
 
-## Quality Pool (30%)
+## Traversal Quality (weight: 0.40)
 
-The quality pool splits 66.7% to validators and 33.3% as a miner bonus for top-quartile performers.
+Measures how relevant the miner's contribution is to the actual traversal.
 
-- **Validator share (66.7%):** Proportional to the number of valid scores submitted in the epoch. Validators that go offline for an epoch earn zero quality pool income.
-- **Miner bonus (33.3%):** Top-quartile miners by average score receive a bonus proportional to their score. The cutoff is recalculated each epoch from the live distribution.
+For each completed `NarrativeHop` in an epoch, validators score:
+- Cosine similarity between returned chunks and query embedding
+- Passage groundedness against retrieved chunks
+- Latency penalty beyond soft limit
 
 ```python
-def quality_pool_epoch(scored_responses, E_epoch, QUALITY_SHARE=0.30, VALIDATOR_CUT=0.667, TOP_QUARTILE=0.25):
-    pool = E_epoch * QUALITY_SHARE
-    validator_pool = pool * VALIDATOR_CUT
-    miner_bonus_pool = pool * (1 - VALIDATOR_CUT)
+def score_traversal(response, hop_context):
+    chunk_relevance = cosine_similarity(response.chunks, hop_context.query_embedding)
+    groundedness = cosine_similarity(response.passage_embedding, hop_context.domain_centroid)
 
-    # Validators: proportional to number of valid scores submitted
-    validator_score_counts = {}
-    for resp in scored_responses:
-        if resp.score is not None:
-            uid = resp.validator_uid
-            validator_score_counts[uid] = validator_score_counts.get(uid, 0) + 1
-    total_validator_scores = sum(validator_score_counts.values()) or 1
-    validator_rewards = {
-        uid: validator_pool * (count / total_validator_scores)
-        for uid, count in validator_score_counts.items()
-    }
+    # Latency penalty
+    latency_excess = max(0, response.process_time - LATENCY_SOFT_LIMIT_S)
+    penalty = min(latency_excess * LATENCY_PENALTY_PER_S, LATENCY_MAX_PENALTY)
 
-    # Miners: top-quartile bonus proportional to score
-    miner_avg_scores = {}
-    miner_score_counts = {}
-    for resp in scored_responses:
-        if resp.score is not None:
-            uid = resp.miner_uid
-            miner_avg_scores[uid] = miner_avg_scores.get(uid, 0) + resp.score
-            miner_score_counts[uid] = miner_score_counts.get(uid, 0) + 1
-    miner_avg_scores = {
-        uid: total / miner_score_counts[uid]
-        for uid, total in miner_avg_scores.items()
-    }
-    sorted_scores = sorted(miner_avg_scores.values())
-    cutoff_index = int(len(sorted_scores) * (1 - TOP_QUARTILE))
-    cutoff = sorted_scores[cutoff_index] if cutoff_index < len(sorted_scores) else float('inf')
-    top_miners = {uid: score for uid, score in miner_avg_scores.items() if score >= cutoff}
-    total_top_score = sum(top_miners.values()) or 1
-    miner_rewards = {
-        uid: miner_bonus_pool * (score / total_top_score)
-        for uid, score in top_miners.items()
-    }
-
-    return validator_rewards, miner_rewards
+    raw = 0.6 * chunk_relevance + 0.4 * groundedness
+    return raw * (1 - penalty)
 ```
 
-The bonus creates competition even at low-traffic nodes. An excellent response on an obscure node still earns meaningfully if it pushes a miner into the top quartile for the epoch.
+Key insight: quality-weighting inside traversal scoring means high-quality nodes on high-traffic paths compound rewards. A miner improving average score from 0.65 to 0.80 on a well-traversed node earns significantly more than the absolute score increase suggests.
 
 ---
 
-## Topology Pool (15%)
+## Narrative Quality (weight: 0.30)
 
-The topology pool distributes based on betweenness centrality — the fraction of all shortest paths in the graph that pass through a given node. This measures structural importance independent of current traffic volume.
-
-Edge weights in the graph store use `weight = 1 / edge_weight` for distance computation, so frequently traversed edges are treated as shorter paths.
+Measures passage coherence, synthesis quality, and narrative continuity.
 
 ```python
-def topology_pool_epoch(graph_store, live_node_ids, E_epoch, TOPOLOGY_SHARE=0.15):
-    import networkx as nx
+def score_quality(response, hop_context):
+    # Coherence: does the passage connect to the path so far?
+    path_coherence = cosine_similarity(
+        response.passage_embedding,
+        mean(hop_context.path_embeddings)
+    )
 
-    pool = E_epoch * TOPOLOGY_SHARE
+    # Direction: does it move toward the destination domain?
+    directional_progress = cosine_similarity(
+        response.passage_embedding,
+        hop_context.destination_centroid
+    ) - cosine_similarity(
+        response.passage_embedding,
+        hop_context.source_centroid
+    )
 
-    # Build directed graph from graph store edges
-    G = nx.DiGraph()
-    G.add_nodes_from(live_node_ids)
-    for edge in graph_store.get_edges(nodes=live_node_ids):
-        # Use inverse weight as distance so high-weight edges are "shorter"
-        distance = 1.0 / edge.weight if edge.weight > 0 else float('inf')
-        G.add_edge(edge.source_id, edge.target_id, weight=distance)
+    # Word count heuristic (MVP; replaced by embedding scoring later)
+    word_count = len(response.narrative_passage.split())
+    length_score = 1.0 if MIN_HOP_WORDS <= word_count <= MAX_HOP_WORDS else 0.4
 
-    # Compute betweenness centrality (normalized by default)
-    centrality = nx.betweenness_centrality(G, weight='weight', normalized=True)
-
-    # Restrict to live nodes only
-    live_centrality = {uid: centrality.get(uid, 0.0) for uid in live_node_ids}
-    total_centrality = sum(live_centrality.values()) or 1.0
-
-    rewards = {
-        uid: pool * (c / total_centrality)
-        for uid, c in live_centrality.items()
-        if c > 0
-    }
-    return rewards
+    return 0.4 * path_coherence + 0.3 * max(0, directional_progress) + 0.3 * length_score
 ```
 
-Key property: newly integrated bridge nodes earn meaningful topology rewards from day one, before player discovery drives traffic. The topology pool rewards structural contribution — connecting otherwise-distant regions of the graph — not just popularity or traversal volume.
-
-A node that serves as a bridge between two major clusters will appear on many shortest paths and earn consistently even during low-traffic periods.
+Comparative scoring: multiple miners respond to the same `NarrativeHop`. Validators rank them comparatively — no ground truth needed. The best passage wins not because it matches a correct answer but because it best serves the attractor basin relative to competitors.
 
 ---
 
-## Proposal Reserve (10%)
+## Topology Importance (weight: 0.15)
 
-The proposal reserve is net-zero over time. It accumulates bonds from governance proposals and disburses them according to proposal outcomes.
+Derived from the validator's local graph store. Measures structural importance independent of current traffic volume.
 
-| Outcome | Bond disposition |
+```python
+def score_topology(node_id, graph_store):
+    centrality = graph_store.betweenness_centrality(node_id)  # Brandes O(VE)
+    edge_weight_sum = graph_store.outgoing_edge_weight_sum(node_id)
+
+    return (
+        0.6 * min(centrality, 1.0) +
+        0.4 * min(log1p(edge_weight_sum) / log1p(50), 1.0)
+    )
+```
+
+- **Betweenness centrality** (60%) — rewards miners whose nodes bridge distinct clusters
+- **Outgoing edge weight sum** (40%) — soft-capped via `log1p` to prevent saturation
+
+Key property: newly integrated bridge nodes earn meaningful topology scores from day one, before traffic discovery. This gives new entrants a viable strategy: extend the graph into underserved regions rather than competing head-to-head with established hubs.
+
+---
+
+## Corpus Integrity (weight: 0.15)
+
+Verifies that domain miners serve consistent, honest corpora.
+
+```python
+def score_corpus(miner_uid, challenge_result):
+    if challenge_result.merkle_root_matches:
+        return 1.0   # consistent corpus
+    elif challenge_result.partial_match:
+        return 0.3   # some chunks changed (may indicate legitimate update)
+    else:
+        return 0.0   # fraud or severe inconsistency
+```
+
+A score of 0.0 here means the miner receives near-zero overall weight → zero emission → eventual deregistration. This is the primary enforcement mechanism (see "Penalty Mechanics" below).
+
+---
+
+## Owner Revenue as Proposal Reserve
+
+The protocol's 18% owner share replaces our original "proposal reserve" concept. This revenue stream funds:
+
+| Use | Description |
+|-----|-------------|
+| Proposal bond returns | Successful proposals get bond × 1.05 from owner funds |
+| Operations | Infrastructure, development, maintenance |
+| Governance | Community initiatives, ecosystem grants |
+| Lapsed bond buffer | 95% of lapsed proposal bonds returned; 5% retained |
+
+Bond lifecycle managed off-chain by the subnet owner, or optionally via Alkahest escrow on its existing L2 deployment:
+
+| Outcome | Bond Disposition |
 |---------|-----------------|
-| Successful proposal (quorum reached, enacted) | Bond returned + 1.05x multiplier from reserve |
-| Lapsed proposal (insufficient quorum, not slashed) | 95% of bond returned; 5% stays in reserve |
-| Slashed proposal (fraudulent corpora, spam detected) | Full bond forfeited to reserve; redistributed to detecting validators |
+| Successful proposal (incubation passed) | Bond returned + 5% bonus from owner revenue |
+| Lapsed proposal (insufficient quorum) | 95% of bond returned |
+| Fraudulent proposal (corpus fraud detected) | Bond forfeited; retained by owner |
 
-The 1.05x multiplier on successful proposals is the incentive to submit well-researched, high-quality proposals. The 5% lapse fee discourages low-effort proposals without making governance prohibitively risky. Slash conditions are restricted to clearly fraudulent submissions — governance disagreement alone is not slashable.
+---
 
-Detecting validators that flag and confirm a fraudulent proposal share the slashed bond proportional to their confirmation stake.
+## Penalty Mechanics (No Native Slashing)
+
+Bittensor has no protocol-level slashing. Our enforcement uses two mechanisms:
+
+### 1. Weight-Based Penalty (Native)
+
+Validators assign zero or near-zero weight to misbehaving miners:
+- Zero weight → zero emission from the 41% miner share
+- Sustained zero emission → economic death
+- Eventually replaced by new registrant (lowest-emission UID deregistered when slots are full)
+
+This is sufficient for: corpus fraud, quality drops, semantic drift, inactivity.
+
+### 2. Bond Forfeiture (Off-Chain / Alkahest)
+
+For proposal bonds, the owner manages bond lifecycle:
+- Bonds locked via Alkahest escrow on its existing L2
+- Validator quorum acts as arbiter for release/forfeit decisions
+- Forfeited bonds retained by owner (not slashed on-chain)
+
+This is sufficient for: proposal spam, failed incubation, manifest fraud.
+
+---
+
+## Validator Earnings
+
+Validators earn from the protocol's 41% validator+staker share, **not** from a custom "quality pool." Their earnings are determined by:
+
+1. **Bond mechanism**: Yuma Consensus computes bonds based on how well validator weights align with consensus. Higher alignment → larger bond → larger dividend share.
+2. **vtrust**: Sum of consensus-clipped weights. Validators with high vtrust earn proportionally more.
+3. **Staker delegation**: Nominators stake to validators, increasing their consensus influence. Validators take a commission (default 18%).
+
+Validators are incentivized to:
+- Score honestly (consensus alignment maximizes dividends)
+- Stay online (activity cutoff excludes inactive validators)
+- Maintain graph infrastructure (required for accurate scoring)
+
+---
+
+## Subnet Economic Health Under dTAO
+
+Our subnet's total emission depends on **net TAO staking inflows**. To attract and retain stakers:
+
+1. **Demonstrate value**: Clear metrics showing traversal quality, knowledge graph growth, miner competition
+2. **Alpha token appreciation**: As more TAO flows in, alpha price rises, benefiting existing stakers
+3. **Validator returns**: High-quality scoring → high vtrust → competitive validator dividends
+4. **Bittensor Foundation support**: We may receive initial TAO tokens and help starting the subnet
+
+Negative net flow = zero emissions = subnet death spiral. Staker confidence is existential.
 
 ---
 
 ## Key Economic Properties
 
-### 1. Traffic concentration effects
+### 1. Traffic concentration hedge
 
-At low Gini coefficient (uniform traffic across nodes), peripheral nodes earn a meaningful traversal share. At high Gini (0.8+), hub traversal earnings dominate, but bridge node topology earnings remain robust because betweenness centrality is structural, not traffic-dependent. The two pools therefore hedge each other: popular hubs earn more from traversal, structurally important bridges earn more from topology.
+Popular hubs earn more from traversal quality weighting. Structurally important bridges earn more from topology scoring. The two axes hedge each other: established hubs dominate traversal, new bridge nodes dominate topology.
 
-### 2. Quality score compounding
+### 2. Quality compounding
 
-A miner at 0.80 average score when the epoch mean is 0.65 earns approximately 23% more per hop via quality weighting, plus qualifies for the top-quartile quality bonus. Over multiple epochs: higher earnings enable better hardware, which enables higher scores, which produces convex returns. This is intentional — the subnet benefits from concentration of high-quality corpus and narrative generation capacity.
+Higher scores → more emission → better hardware → higher quality → more wins. This convexity is intentional. The network rewards quality escalation, not just participation.
 
-### 3. Validator incentive stability
+### 3. New entrant strategy
 
-Validators earn proportional to valid scores submitted. Going offline for an epoch yields zero quality pool income. Validators earn approximately 2x per-score income compared to top-quartile miners (66.7% vs 33.3% of quality pool, before miner count effects). This spread is appropriate: submitting a valid score requires running inference and maintaining metagraph state, which is more expensive than serving a single hop.
+New miners cannot beat established hubs on quality immediately. But they can extend the graph into underserved regions, earning topology rewards that fund infrastructure for eventual quality competition.
 
-### 4. E_epoch scaling
+### 4. No separate "pools"
 
-The subnet's emission share rises with consistent validator activity and demonstrated miner quality. It falls if validators defect, metagraph state goes stale, or the subnet fails to produce the volume of scored responses the root network expects. The emission model treats `E_epoch` as input — operators should treat validator uptime and metagraph health as the primary levers for subnet-level emission share.
+Unlike our original design, there are no separate token pools with independent distribution. All miner emission flows through a single weight vector. The "pools" are axis weights in the scoring function — they shape the weight vector, but the distribution mechanism is unified through Yuma Consensus.
 
 ---
 
-## Arkhai/Alkahest Integration Points
+## Configuration Reference
 
-The emission model maps naturally onto Alkahest's escrow and arbiter pattern, providing on-chain attestation for every economic event via EAS (Ethereum Attestation Service).
-
-**Traversal credits as escrow obligations**
-Each completed hop creates an escrow obligation. The escrow releases TAO to the winning miner when the validator's arbiter confirms the quality score meets threshold. The arbiter can be a simple threshold check (score >= 0.5) or a more sophisticated multi-validator consensus.
-
-**Natural language agreements for domain manifests**
-Miners' domain manifests — the description of what corpus they maintain and what nodes they serve — can be expressed as Alkahest obligations with algorithmic arbiters checking corpus integrity. The arbiter verifies that the miner's actual corpus matches the manifest before releasing topology rewards.
-
-**Proposal bonds as Alkahest escrows**
-Governance proposal bonds are locked via Alkahest escrow contracts. The arbiter is the validator set: slash decisions, quorum confirmations, and lapse rulings are all resolvable on-chain by the validators that participated in the epoch when the proposal was evaluated.
-
-**Attestation trail**
-Every economic event — hop completion, score submission, topology reward, proposal bond outcome — produces an EAS attestation. This creates an auditable, permissionless record of subnet economics that external tools can query without access to Bittensor's internal metagraph state.
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `TRAVERSAL_WEIGHT` | Weight for traversal axis | 0.40 |
+| `QUALITY_WEIGHT` | Weight for quality axis | 0.30 |
+| `TOPOLOGY_WEIGHT` | Weight for topology axis | 0.15 |
+| `CORPUS_WEIGHT` | Weight for corpus axis | 0.15 |
+| `LATENCY_SOFT_LIMIT_S` | Seconds before latency penalty | 3.0 |
+| `LATENCY_PENALTY_PER_S` | Penalty per excess second | 0.1 |
+| `LATENCY_MAX_PENALTY` | Maximum latency penalty | 0.5 |
+| `MIN_HOP_WORDS` | Minimum passage word count | 100 |
+| `MAX_HOP_WORDS` | Maximum passage word count | 500 |

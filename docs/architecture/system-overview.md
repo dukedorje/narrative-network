@@ -150,7 +150,7 @@ The Gateway is the only internet-facing component. All inter-component communica
 - Compute betweenness centrality over the graph to weight node importance in emissions
 - Run embed workers (parallel embedding of miner responses) and score workers (comparative ranking)
 - Write scored edge reinforcements to `subnet/graph_store.py` via KùzuDB
-- Execute `set_weights` on Subtensor via the `bt` node client
+- Execute `set_weights()` on Subtensor (SDK v10 API). Each validator sets weights independently; Yuma Consensus aggregates across validators with κ-majority clipping. Commit-reveal v4 (Drand time-lock encryption) prevents weight copying automatically when `CommitRevealWeightsEnabled = True`.
 
 **Modules:** `subnet/validator.py`, `subnet/graph_store.py`, `subnet/protocol.py`
 
@@ -176,7 +176,7 @@ The canonical on-chain registry for Subnet 42. Validators read the metagraph to 
 - **UID registry** — maps miner hotkeys to node IDs and metadata CIDs
 - **Stake table** — TAO staked per UID; governs emission share
 - **Metagraph snapshots** — periodic snapshots used by validators to anchor scoring epochs
-- **Weight matrix** — committed by validators after each scoring epoch; drives TAO emission
+- **Weight matrix** — set independently by each validator; Yuma Consensus aggregates into emission distribution
 
 ---
 
@@ -230,11 +230,11 @@ Validator VM  (subnet/validator.py)  — runs asynchronously, not on critical pa
   │  18. Compute betweenness centrality across graph topology
   │  19. Write edge weight reinforcement to KùzuDB  (subnet/graph_store.py)
   │  20. Trigger path decay on un-traversed alternatives
-  │  21. Commit set_weights to Subtensor via bt node client
+  │  21. Call set_weights() on Subtensor (each validator independently; Yuma Consensus aggregates)
   ▼
 Subtensor Chain
-  │  22. Record committed weights in metagraph
-  │  23. Distribute TAO emission proportional to stake-weighted scores
+  │  22. Yuma Consensus aggregates validator weights (κ-majority clipping)
+  │  23. Distribute TAO emission: 41% miners (by weight rank), 41% validators, 18% owner
   ▼
 Living Knowledge Graph Store  (KùzuDB via subnet/graph_store.py)
      edge weights  |  traversal history  |  node embeddings  |  path decay state
@@ -338,20 +338,22 @@ class NarrativeHop(bt.Synapse):
 
 `BranchChoice` contains `node_id`, `edge_label`, and proposed `weight_delta`. Validators verify that all proposed `node_id` values exist in the live metagraph and that `weight_delta` values are within the permitted bounds defined in `subnet/validator.py`.
 
-### 5.3 WeightCommit
+### 5.3 WeightCommit (Internal Dataclass)
 
-Direction: Validator → Subtensor (internal to validators, not routed through Gateway)
+`WeightCommit` is **not** a `bt.Synapse`. It is a pure Python dataclass used internally by validators to accumulate scores before calling `subtensor.set_weights()`.
 
 ```python
-class WeightCommit(bt.Synapse):
+@dataclass
+class WeightCommit:
     epoch: int
-    uids: list[int]                    # miner UIDs scored this epoch
-    weights: list[float]               # normalized scores per UID
-    attestation_summary: dict          # per-UID breakdown: groundedness, coherence, edge_utility
+    validator_uid: int
+    miner_scores: dict[int, float]     # uid → normalised weight
+    session_count: int
+    mean_score: float
     graph_delta: GraphDelta            # edge weight changes to apply to graph store
 ```
 
-`GraphDelta` is written to `subnet/graph_store.py` before the weight commit is sent to chain, ensuring the graph store and chain weights remain consistent.
+`GraphDelta` is written to `subnet/graph_store.py` before weights are set on chain, ensuring the graph store and chain weights remain consistent. Each validator independently calls `set_weights()` — Yuma Consensus handles aggregation.
 
 ---
 
@@ -459,7 +461,7 @@ class DomainManifest:
     manifest_cid: str                  # IPFS CID of this manifest (self-referential after publish)
 ```
 
-The manifest CID is registered on-chain against the miner's UID. Validators fetch manifests from IPFS to perform Merkle challenges: sampling random chunk indices, requesting the chunk bytes from the miner's chunk endpoint, and verifying the Merkle proof. Miners that fail challenges or whose `corpus_merkle_root` does not match on-chain registration are slashed.
+The manifest CID is registered on-chain against the miner's UID. Validators fetch manifests from IPFS to perform Merkle challenges: sampling random chunk indices, requesting the chunk bytes from the miner's chunk endpoint, and verifying the Merkle proof. Miners that fail challenges or whose `corpus_merkle_root` does not match on-chain registration receive zero corpus score → near-zero weight → zero emission → eventual deregistration.
 
 ### 8.2 Metagraph Sync
 
@@ -642,7 +644,7 @@ A rolling attestation window in `subnet/validator.py` detects sustained quality 
 
 | Module | Component | Role |
 |---|---|---|
-| `subnet/protocol.py` | All | Synapse type definitions: `KnowledgeQuery`, `NarrativeHop`, `WeightCommit` |
+| `subnet/protocol.py` | All | Synapse type definitions: `KnowledgeQuery`, `NarrativeHop`; internal `WeightCommit` dataclass |
 | `subnet/validator.py` | Validator | Scoring pipeline, epoch orchestration, betweenness centrality, `set_weights` |
 | `subnet/graph_store.py` | Validator, Gateway | KùzuDB client wrapper, edge reinforcement, decay, traversal event logging |
 | `orchestrator/gateway.py` | Gateway | FastAPI application, synapse dispatch, response selection, streaming |
