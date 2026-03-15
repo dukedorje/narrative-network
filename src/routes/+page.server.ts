@@ -1,12 +1,11 @@
-import { delve } from '$lib/server/bonfires';
+import { getAllNodes, searchGraph } from '$lib/server/graph';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url }) => {
 	const query = url.searchParams.get('q');
 
 	if (!query) {
-		// Default: show a broad view of the knowledge graph
-		const result = await delve('knowledge graph overview', { numResults: 30 });
+		const result = await getAllNodes();
 		return {
 			query: null,
 			entities: result.entities,
@@ -16,7 +15,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		};
 	}
 
-	const result = await delve(query, { numResults: 30 });
+	const result = await searchGraph(query, { numResults: 30 });
 	return {
 		query,
 		entities: result.entities,
