@@ -1,0 +1,83 @@
+# Seed topology for Narrative Network local development
+# 4 quantum mechanics sub-domains with weighted edges
+
+nodes:
+  - node_id: "quantum-foundations"
+    state: "Live"
+    metadata:
+      description: "Core quantum mechanics: wave functions, superposition, uncertainty"
+      persona: "professor"
+    corpus_files:
+      - "wave_functions.txt"
+      - "superposition_and_measurement.txt"
+      - "uncertainty_principle.txt"
+
+  - node_id: "quantum-phenomena"
+    state: "Live"
+    metadata:
+      description: "Observable quantum effects: double slit, tunneling, entanglement"
+      persona: "experimentalist"
+    corpus_files:
+      - "double_slit_experiment.txt"
+      - "quantum_tunneling.txt"
+      - "quantum_entanglement.txt"
+
+  - node_id: "quantum-interpretations"
+    state: "Live"
+    metadata:
+      description: "Interpretive frameworks: Copenhagen, many-worlds, decoherence"
+      persona: "philosopher"
+    corpus_files:
+      - "copenhagen_interpretation.txt"
+      - "many_worlds_interpretation.txt"
+      - "quantum_decoherence.txt"
+
+  - node_id: "quantum-bridge"
+    state: "Live"
+    metadata:
+      description: "Angular momentum and spin — bridges foundations to phenomena"
+      persona: "neutral"
+    corpus_files:
+      - "spin_and_angular_momentum.txt"
+
+edges:
+  # Foundations connects to everything
+  - source_id: "quantum-foundations"
+    dest_id: "quantum-phenomena"
+    weight: 2.0
+  - source_id: "quantum-foundations"
+    dest_id: "quantum-interpretations"
+    weight: 1.5
+  - source_id: "quantum-foundations"
+    dest_id: "quantum-bridge"
+    weight: 1.8
+
+  # Phenomena connects back and to interpretations
+  - source_id: "quantum-phenomena"
+    dest_id: "quantum-foundations"
+    weight: 1.5
+  - source_id: "quantum-phenomena"
+    dest_id: "quantum-interpretations"
+    weight: 2.0
+  - source_id: "quantum-phenomena"
+    dest_id: "quantum-bridge"
+    weight: 1.0
+
+  # Interpretations connects back
+  - source_id: "quantum-interpretations"
+    dest_id: "quantum-foundations"
+    weight: 1.5
+  - source_id: "quantum-interpretations"
+    dest_id: "quantum-phenomena"
+    weight: 1.8
+
+  # Bridge connects to all (hub node)
+  - source_id: "quantum-bridge"
+    dest_id: "quantum-foundations"
+    weight: 1.8
+  - source_id: "quantum-bridge"
+    dest_id: "quantum-phenomena"
+    weight: 1.5
+  - source_id: "quantum-bridge"
+    dest_id: "quantum-interpretations"
+    weight: 1.2

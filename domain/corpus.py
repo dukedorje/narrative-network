@@ -300,7 +300,7 @@ class MerkleProver:
         Returns True iff the proof is mathematically valid.
         """
         try:
-            current = bytes.fromhex(proof["leaf_hash"])
+            current = _sha256(bytes.fromhex(proof["leaf_hash"]))
             for sibling in proof["siblings"]:
                 sib = bytes.fromhex(sibling["hash"])
                 if sibling["position"] == "left":
