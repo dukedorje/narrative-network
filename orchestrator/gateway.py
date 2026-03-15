@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from subnet import NETUID
-from subnet.graph_store import GraphStore
+from subnet.graph_store import Edge, GraphStore, Node
 from subnet.protocol import NodeID, SessionID
 
+from orchestrator.arbiter import TraversalArbiter
 from orchestrator.embedder import Embedder
 from orchestrator.router import Router
 from orchestrator.safety_guard import PathSafetyGuard
@@ -94,6 +95,7 @@ def create_app(
 
     # In-memory session registry: session_id -> OrchestratorSession
     _sessions: dict[SessionID, OrchestratorSession] = {}
+    _arbiter = TraversalArbiter()
 
     dendrite = bt.Dendrite(wallet=wallet)
 
@@ -199,6 +201,29 @@ def create_app(
             destination_node_id=req.destination_node_id,
             axon=axon,
         )
+
+        # Run Arkhai arbiter to filter the next-hop candidate set
+        raw_cards: list[dict] = result.get("choice_cards") or []
+        if raw_cards:
+            candidates = [c["destination_node_id"] for c in raw_cards]
+            node_descriptions = {
+                nid: (graph_store.get_node(nid).metadata.get("description", nid)
+                      if graph_store.get_node(nid) else nid)
+                for nid in candidates + [req.destination_node_id]
+            }
+            arbiter_result = await _arbiter.check_hop(
+                session_id=req.session_id,
+                source_node=session.player_path[-2] if len(session.player_path) > 1 else req.destination_node_id,
+                dest_node=req.destination_node_id,
+                player_path=list(session.player_path),
+                candidates=candidates,
+                node_descriptions=node_descriptions,
+            )
+            approved_ids = set(arbiter_result.filtered_candidates)
+            filtered_cards = [c for c in raw_cards if c["destination_node_id"] in approved_ids]
+            result["choice_cards"] = filtered_cards or raw_cards  # never return empty if fallback
+            if arbiter_result.reasoning and not result.get("knowledge_synthesis"):
+                result["knowledge_synthesis"] = arbiter_result.reasoning
 
         return HopResponse(
             session_id=result["session_id"],
@@ -490,6 +515,9 @@ def create_dev_app() -> FastAPI:
     )
 
     _sessions: dict[SessionID, dict[str, Any]] = {}
+    _arbiter = TraversalArbiter()
+
+    _register_graph_endpoints(app, graph_store)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -504,18 +532,6 @@ def create_dev_app() -> FastAPI:
     @app.get("/graph/stats")
     async def graph_stats() -> dict:
         return graph_store.stats()
-
-    @app.get("/graph/nodes")
-    async def graph_nodes() -> list[dict]:
-        node_ids = graph_store.get_live_node_ids()
-        return [
-            {
-                "node_id": nid,
-                "has_corpus": nid in miner_pool.loaded_nodes,
-                "neighbours": graph_store.neighbours(nid),
-            }
-            for nid in node_ids
-        ]
 
     @app.post("/enter", response_model=EnterResponse)
     async def enter(req: EnterRequest) -> dict[str, Any]:
@@ -617,7 +633,27 @@ def create_dev_app() -> FastAPI:
             adjacent_nodes=adjacent if adjacent else ["(terminal)"],
         )
 
-        choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+        raw_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
+
+        # Arkhai arbiter filters candidates to meaningful forward steps
+        if raw_cards:
+            node_descriptions = {
+                nid: (graph_store.get_node(nid).metadata.get("description", nid)
+                      if graph_store.get_node(nid) else nid)
+                for nid in adjacent + [req.destination_node_id]
+            }
+            arbiter_result = await _arbiter.check_hop(
+                session_id=req.session_id,
+                source_node=player_path[-1] if player_path else req.destination_node_id,
+                dest_node=req.destination_node_id,
+                player_path=player_path,
+                candidates=[c["destination_node_id"] for c in raw_cards],
+                node_descriptions=node_descriptions,
+            )
+            approved = set(arbiter_result.filtered_candidates)
+            choice_cards = [c for c in raw_cards if c["destination_node_id"] in approved] or raw_cards
+        else:
+            choice_cards = raw_cards
 
         # Update session
         passage = result.get("narrative_passage", "")
