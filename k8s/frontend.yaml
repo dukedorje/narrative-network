@@ -25,11 +25,14 @@ spec:
             - name: http
               containerPort: 3000
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: narrative-network-config
+            - secretRef:
+                name: narrative-network-secrets
           env:
-            - name: PUBLIC_API_URL
-              value: "https://api.narrative.network"
             - name: ORIGIN
-              value: "https://app.narrative.network"
+              value: "https://futograph.online"
           resources:
             requests:
               memory: "128Mi"

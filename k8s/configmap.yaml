@@ -41,6 +41,9 @@ data:
   AXON_MOVING_AVERAGE_ALPHA: "0.1"
   AXON_CHALLENGE_SAMPLE_SIZE: "10"
 
+  # Gateway URL (cluster-internal for frontend → gateway calls)
+  GATEWAY_URL: "http://gateway.narrative-network.svc.cluster.local"
+
   # Orchestrator
   AXON_ORCHESTRATOR_MAX_HOPS: "8"
   AXON_ORCHESTRATOR_MIN_MINERS: "3"

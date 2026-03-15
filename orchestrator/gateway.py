@@ -22,6 +22,113 @@ from orchestrator.session import OrchestratorSession, SessionState
 
 
 # ---------------------------------------------------------------------------
+# Graph browsing helpers
+# ---------------------------------------------------------------------------
+
+
+def _node_to_dict(node: Node) -> dict:
+    return {
+        "uuid": node.node_id,
+        "name": node.node_id.replace("-", " ").title(),
+        "node_type": "domain",
+        "labels": [node.metadata.get("persona", "neutral")],
+        "summary": node.metadata.get("description", ""),
+        "created_at": node.created_at,
+    }
+
+
+def _edge_to_dict(edge: Edge) -> dict:
+    return {
+        "uuid": f"{edge.source_id}:{edge.dest_id}",
+        "edge_type": "connects",
+        "source_node_uuid": edge.source_id,
+        "target_node_uuid": edge.dest_id,
+        "fact": None,
+        "weight": edge.weight,
+    }
+
+
+def _episodes_from_sessions(sessions: list[dict]) -> list[dict]:
+    return [
+        {
+            "uuid": r["session_id"],
+            "name": f"{r['source_id']} → {r['dest_id']}",
+            "content": {"content": f"Traversal from {r['source_id']} to {r['dest_id']}"},
+            "created_at": r["timestamp"],
+        }
+        for r in sessions
+    ]
+
+
+class _SearchRequest(BaseModel):
+    query: str
+    num_results: int = 20
+
+
+def _register_graph_endpoints(app: FastAPI, graph_store: GraphStore) -> None:
+    """Register read-only graph browsing endpoints on *app*."""
+
+    @app.get("/graph/nodes")
+    async def graph_nodes_all() -> dict:
+        nodes = [n for n in graph_store.get_all_nodes() if n.state == "Live"]
+        edges = graph_store.get_all_edges()
+        return {
+            "success": True,
+            "entities": [_node_to_dict(n) for n in nodes],
+            "edges": [_edge_to_dict(e) for e in edges],
+            "episodes": _episodes_from_sessions(graph_store.sample_recent_sessions(10)),
+            "num_results": len(nodes),
+        }
+
+    @app.post("/graph/search")
+    async def graph_search(req: _SearchRequest) -> dict:
+        q = req.query.lower()
+        all_live = [n for n in graph_store.get_all_nodes() if n.state == "Live"]
+        words = q.split()
+        matched = [
+            n for n in all_live
+            if q in n.node_id.lower()
+            or any(w in n.metadata.get("description", "").lower() for w in words)
+        ] or all_live
+        matched = matched[: req.num_results]
+        matched_ids = {n.node_id for n in matched}
+        edges = [
+            _edge_to_dict(e)
+            for e in graph_store.get_all_edges()
+            if e.source_id in matched_ids or e.dest_id in matched_ids
+        ]
+        return {
+            "success": True,
+            "entities": [_node_to_dict(n) for n in matched],
+            "edges": edges,
+            "episodes": _episodes_from_sessions(graph_store.sample_recent_sessions(5)),
+            "num_results": len(matched),
+        }
+
+    @app.get("/graph/node/{node_id}/expand")
+    async def graph_expand_node(node_id: str) -> dict:
+        node = graph_store.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+        neighbour_ids = set(graph_store.neighbours(node_id))
+        neighbour_nodes = [
+            graph_store.get_node(nid) for nid in neighbour_ids if graph_store.get_node(nid)
+        ]
+        edges = [
+            _edge_to_dict(e)
+            for e in graph_store.get_all_edges()
+            if (e.source_id == node_id and e.dest_id in neighbour_ids)
+            or (e.dest_id == node_id)
+        ]
+        return {
+            "success": True,
+            "nodes": [_node_to_dict(n) for n in neighbour_nodes if n is not None],
+            "edges": edges,
+            "num_results": len(neighbour_nodes),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Pydantic request / response models
 # ---------------------------------------------------------------------------
 
@@ -92,6 +199,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    _register_graph_endpoints(app, graph_store)
 
     # In-memory session registry: session_id -> OrchestratorSession
     _sessions: dict[SessionID, OrchestratorSession] = {}
@@ -317,192 +426,17 @@ def create_app(
 
 
 # ---------------------------------------------------------------------------
-# Standalone / dev app instance — full local gateway with in-process miners
+# Standalone / dev app instance
 # ---------------------------------------------------------------------------
 
-
-class _LocalMinerPool:
-    """In-process miner pool: loads corpus per node, does chunk retrieval via numpy."""
-
-    def __init__(self, corpus_map: dict[str, list], embedder: Embedder) -> None:
-        from domain.corpus import CorpusLoader, Chunk
-
-        self._chunks: dict[str, list[Chunk]] = {}
-        self._centroids: dict[str, list[float]] = {}
-        self._embedder = embedder
-
-        for node_id, file_paths in corpus_map.items():
-            if not file_paths:
-                continue
-            # Use the first file's parent as corpus_dir
-            corpus_dir = file_paths[0].parent
-            if not corpus_dir.exists():
-                continue
-            cache_path = corpus_dir.parent / ".cache" / f"{node_id}.pkl"
-            loader = CorpusLoader(
-                corpus_dir=str(corpus_dir),
-                cache_path=str(cache_path),
-            )
-            chunks = loader.load()
-            if chunks:
-                self._chunks[node_id] = chunks
-                self._centroids[node_id] = loader.centroid
-
-    def retrieve_chunks(
-        self, node_id: str, query_embedding: list[float], top_k: int = 5
-    ) -> list[dict]:
-        """Retrieve top-k chunks from a specific node's corpus."""
-        import numpy as np
-
-        chunks = self._chunks.get(node_id, [])
-        if not chunks:
-            return []
-
-        query_emb = np.array(query_embedding, dtype=np.float32)
-        chunk_embs = np.array([c.embedding for c in chunks], dtype=np.float32)
-        scores = chunk_embs @ query_emb
-        k = min(top_k, len(chunks))
-        top_indices = np.argpartition(scores, -k)[-k:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-
-        return [
-            {
-                "id": chunks[i].id,
-                "text": chunks[i].text,
-                "hash": chunks[i].hash,
-                "score": float(scores[i]),
-            }
-            for i in top_indices
-        ]
-
-    def rank_entry_nodes(
-        self, query_embedding: list[float], top_k: int = 3
-    ) -> list[tuple[str, float]]:
-        """Rank all nodes by centroid similarity to query. Returns [(node_id, similarity)]."""
-        import numpy as np
-
-        query_emb = np.array(query_embedding, dtype=np.float32)
-        scored: list[tuple[str, float]] = []
-        for node_id, centroid in self._centroids.items():
-            centroid_vec = np.array(centroid, dtype=np.float32)
-            sim = float(centroid_vec @ query_emb)
-            scored.append((node_id, sim))
-        scored.sort(key=lambda t: t[1], reverse=True)
-        return scored[:top_k]
-
-    @property
-    def loaded_nodes(self) -> list[str]:
-        return list(self._chunks.keys())
-
-
-class _LocalNarrativeGenerator:
-    """Calls OpenRouter directly for narrative hop generation."""
-
-    def __init__(self) -> None:
-        from subnet.config import (
-            NARRATIVE_MAX_TOKENS,
-            NARRATIVE_MODEL,
-            NARRATIVE_TEMPERATURE,
-            OPENROUTER_BASE_URL,
-        )
-        import os
-
-        self._model = NARRATIVE_MODEL
-        self._max_tokens = NARRATIVE_MAX_TOKENS
-        self._temperature = NARRATIVE_TEMPERATURE
-        self._base_url = OPENROUTER_BASE_URL
-        self._api_key = os.environ.get("OPENROUTER_API_KEY", "")
-        self._client = None
-
-    def _get_client(self):
-        if self._client is None:
-            from openai import AsyncOpenAI
-
-            self._client = AsyncOpenAI(
-                api_key=self._api_key or "sk-placeholder",
-                base_url=self._base_url,
-            )
-        return self._client
-
-    async def generate_hop(
-        self,
-        destination_node_id: str,
-        player_path: list[str],
-        prior_narrative: str,
-        retrieved_chunks: list[dict],
-        adjacent_nodes: list[str],
-        persona: str = "explorer",
-    ) -> dict[str, Any]:
-        """Generate a narrative hop passage via OpenRouter. Returns parsed result dict."""
-        import json
-        from domain.narrative.prompt import build_prompt
-
-        system_prompt, user_prompt = build_prompt(
-            destination_node_id=destination_node_id,
-            player_path=player_path,
-            prior_narrative=prior_narrative,
-            retrieved_chunks=retrieved_chunks,
-            persona=persona,
-            num_choices=min(3, max(1, len(adjacent_nodes))),
-        )
-
-        # Inject adjacent node IDs so the LLM can generate valid choice cards
-        user_prompt += (
-            f"\n\nAvailable destination nodes for choice cards: {adjacent_nodes}\n"
-            "You MUST use only these node IDs in your choice_cards destination_node_id fields."
-        )
-
-        client = self._get_client()
-        try:
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-                response_format={"type": "json_object"},
-            )
-            raw = response.choices[0].message.content or ""
-            return json.loads(raw)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error("Narrative generation failed: %s", exc)
-            return {
-                "narrative_passage": f"(generation failed: {exc})",
-                "choice_cards": [
-                    {"text": f"Continue to {n}", "destination_node_id": n,
-                     "edge_weight_delta": 0.0, "thematic_color": "#888888"}
-                    for n in adjacent_nodes[:3]
-                ],
-                "knowledge_synthesis": "",
-            }
-
-
 def create_dev_app() -> FastAPI:
-    """Create a standalone gateway for local dev — full traversal, no Bittensor."""
-    import logging
-
-    log = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-
-    log.info("Loading seed topology...")
+    """Create a standalone gateway for local dev (no Bittensor connection)."""
     from seed.loader import load_topology
 
-    graph_store, corpus_map = load_topology()
-
-    log.info("Loading embedder + corpus (this may take a moment on first run)...")
+    graph_store = GraphStore(db_path=None)  # in-memory only
+    load_topology(graph_store=graph_store)
     embedder = Embedder()
-    miner_pool = _LocalMinerPool(corpus_map, embedder)
-    narrator = _LocalNarrativeGenerator()
     safety_guard = PathSafetyGuard()
-
-    log.info(
-        "Dev gateway ready: %d graph nodes, %d with loaded corpus",
-        graph_store.stats()["node_count"],
-        len(miner_pool.loaded_nodes),
-    )
 
     app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
 
@@ -523,10 +457,9 @@ def create_dev_app() -> FastAPI:
     async def healthz() -> dict[str, Any]:
         return {
             "status": "ok",
-            "mode": "dev",
+            "mode": "standalone",
             "netuid": NETUID,
             "graph_stats": graph_store.stats(),
-            "loaded_corpus_nodes": miner_pool.loaded_nodes,
         }
 
     @app.get("/graph/stats")
@@ -689,33 +622,6 @@ def create_dev_app() -> FastAPI:
         }
 
     return app
-
-
-def _validate_choice_cards(raw_cards: list, valid_nodes: list[str]) -> list[dict]:
-    """Filter and normalise choice cards to only reference valid adjacent nodes."""
-    valid_set = set(valid_nodes)
-    cards: list[dict] = []
-    for card in raw_cards:
-        if not isinstance(card, dict):
-            continue
-        dest = card.get("destination_node_id", "")
-        if dest in valid_set:
-            cards.append({
-                "text": card.get("text", f"Go to {dest}"),
-                "destination_node_id": dest,
-                "edge_weight_delta": float(card.get("edge_weight_delta", 0.0)),
-                "thematic_color": card.get("thematic_color", "#888888"),
-            })
-    # If LLM hallucinated bad node IDs, provide fallback cards
-    if not cards and valid_nodes:
-        for node_id in valid_nodes[:3]:
-            cards.append({
-                "text": f"Travel to {node_id}",
-                "destination_node_id": node_id,
-                "edge_weight_delta": 0.0,
-                "thematic_color": "#888888",
-            })
-    return cards
 
 
 import os as _os
