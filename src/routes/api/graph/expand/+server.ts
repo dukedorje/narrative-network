@@ -1,14 +1,21 @@
 import { json } from '@sveltejs/kit';
-import { expandEntity } from '$lib/server/bonfires';
 import type { RequestHandler } from './$types';
 
+// Bonfires.ai disabled for demo — return empty results
 export const POST: RequestHandler = async ({ request }) => {
-	const { entityUuid, limit } = await request.json();
+	const { entityUuid } = await request.json();
 
 	if (!entityUuid) {
 		return json({ error: 'entityUuid required' }, { status: 400 });
 	}
 
-	const result = await expandEntity(entityUuid, limit ?? 20);
-	return json(result);
+	return json({
+		success: true,
+		message: 'Bonfires.ai disabled for demo',
+		episodes: [],
+		nodes: [],
+		edges: [],
+		graph_id: null,
+		num_results: 0
+	});
 };

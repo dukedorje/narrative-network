@@ -10,9 +10,7 @@ import { env } from '$env/dynamic/private';
 const BASE_URL = 'https://tnt-v2.api.bonfires.ai';
 
 function getBonfireId(): string {
-	// Our bonfire (69b5aa...) requires an API key we don't have yet.
-	// Fall back to the public ETHBoulder bonfire for the spike.
-	return env.PUBLIC_BONFIRE_ID ?? '698b70002849d936f4259848';
+	return env.BONFIRE_ID ?? '698b70002849d936f4259848';
 }
 
 function getAgentId(): string | undefined {

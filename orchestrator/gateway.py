@@ -38,6 +38,13 @@ class EnterResponse(BaseModel):
     knowledge_synthesis: str | None
     player_path: list[NodeID]
     state: str
+    scores: dict[str, float] | None = None
+    emission_snapshot: dict[str, float] | None = None
+    graph_delta: dict | None = None
+    responding_nodes: list[dict] | None = None
+    unbrowse_used: bool | None = None
+    unbrowse_context: str | None = None
+    nla_agreement: dict | None = None
 
 
 class HopRequest(BaseModel):
@@ -54,6 +61,13 @@ class HopResponse(BaseModel):
     player_path: list[NodeID]
     state: str
     error: str | None = None
+    scores: dict[str, float] | None = None
+    emission_snapshot: dict[str, float] | None = None
+    graph_delta: dict | None = None
+    responding_nodes: list[dict] | None = None
+    unbrowse_used: bool | None = None
+    unbrowse_context: str | None = None
+    nla_agreement: dict | None = None
 
 
 class SessionResponse(BaseModel):
@@ -473,6 +487,13 @@ def create_dev_app() -> FastAPI:
     narrator = _LocalNarrativeGenerator()
     safety_guard = PathSafetyGuard()
 
+    from evolution.nla_settlement import NLASettlementClient
+    from orchestrator.mock_scoring import mock_scores
+    from orchestrator.unbrowse import UnbrowseClient
+
+    unbrowse_client = UnbrowseClient()
+    nla_client = NLASettlementClient()
+
     log.info(
         "Dev gateway ready: %d graph nodes, %d with loaded corpus",
         graph_store.stats()["node_count"],
@@ -561,6 +582,46 @@ def create_dev_app() -> FastAPI:
             "query_embedding": query_embedding,
         }
 
+        # Mock scoring enrichment
+        chunk_scores = [c["score"] for c in chunks]
+        passage_text = result.get("narrative_passage", "")
+        scores = mock_scores(chunk_scores, passage_text, entry_node_id, graph_store)
+        emission_snapshot = {"traversal": 0.45, "quality": 0.30, "topology": 0.15, "reserve": 0.10}
+
+        # Graph delta: current edge weights for entry node (no reinforcement on /enter)
+        current_edges = {}
+        for nb in graph_store.neighbours(entry_node_id):
+            edge = graph_store._mem._adj.get(entry_node_id, {}).get(nb)
+            if edge:
+                current_edges[f"{entry_node_id}->{nb}"] = edge.weight
+        graph_delta = {k: {"before": v, "after": v} for k, v in current_edges.items()}
+
+        responding_nodes = [
+            {"node_id": nid, "similarity": sim} for nid, sim in ranked
+        ]
+
+        # Unbrowse external context (non-blocking — no API key = skip)
+        unbrowse_context: str | None = None
+        unbrowse_used = False
+        if unbrowse_client.api_key:
+            try:
+                ub_results = await unbrowse_client.fetch_context(req.query_text, entry_node_id)
+                if ub_results:
+                    unbrowse_context = unbrowse_client.format_for_prompt(ub_results)
+                    unbrowse_used = True
+            except Exception:
+                pass
+
+        # NLA agreement (demo — draft status, no on-chain interaction)
+        nla_agreement_obj = nla_client.build_proposal_agreement(
+            proposal_id=session_id,
+            proposer_hotkey="demo-hotkey",
+            node_id=entry_node_id,
+            proposal_type="TRAVERSE",
+            bond_tao=0.0,
+            voting_deadline_block=0,
+        )
+
         return {
             "session_id": session_id,
             "current_node_id": entry_node_id,
@@ -569,6 +630,16 @@ def create_dev_app() -> FastAPI:
             "knowledge_synthesis": result.get("knowledge_synthesis"),
             "player_path": [entry_node_id],
             "state": "active",
+            "scores": scores,
+            "emission_snapshot": emission_snapshot,
+            "graph_delta": graph_delta,
+            "responding_nodes": responding_nodes,
+            "unbrowse_used": unbrowse_used,
+            "unbrowse_context": unbrowse_context,
+            "nla_agreement": {
+                "agreement_text": nla_agreement_obj.agreement_text,
+                "status": nla_agreement_obj.status,
+            },
         }
 
     @app.post("/hop", response_model=HopResponse)
@@ -619,8 +690,63 @@ def create_dev_app() -> FastAPI:
 
         choice_cards = _validate_choice_cards(result.get("choice_cards", []), adjacent)
 
-        # Update session
+        # Mock scoring enrichment
+        chunk_scores = [c["score"] for c in chunks]
         passage = result.get("narrative_passage", "")
+        scores = mock_scores(chunk_scores, passage, req.destination_node_id, graph_store)
+        emission_snapshot = {"traversal": 0.45, "quality": 0.30, "topology": 0.15, "reserve": 0.10}
+
+        # Graph delta: capture edge weights before reinforcement, reinforce, then after
+        source_id = player_path[-1] if player_path else req.destination_node_id
+        dest_id = req.destination_node_id
+        before_edges: dict[str, float] = {}
+        for nb in graph_store.neighbours(source_id):
+            edge = graph_store._mem._adj.get(source_id, {}).get(nb)
+            if edge:
+                before_edges[f"{source_id}->{nb}"] = edge.weight
+        combined_score = sum(scores.values()) / len(scores)
+        graph_store.reinforce_edge(source_id, dest_id, combined_score)
+        after_edges: dict[str, float] = {}
+        for nb in graph_store.neighbours(source_id):
+            edge = graph_store._mem._adj.get(source_id, {}).get(nb)
+            if edge:
+                after_edges[f"{source_id}->{nb}"] = edge.weight
+        all_edge_keys = set(list(before_edges.keys()) + list(after_edges.keys()))
+        graph_delta = {
+            k: {"before": before_edges.get(k, 0.0), "after": after_edges.get(k, 0.0)}
+            for k in all_edge_keys
+        }
+
+        responding_nodes = [
+            {"node_id": nid, "similarity": sim}
+            for nid, sim in miner_pool.rank_entry_nodes(query_embedding)
+        ]
+
+        # Unbrowse external context (non-blocking)
+        unbrowse_context: str | None = None
+        unbrowse_used = False
+        if unbrowse_client.api_key:
+            try:
+                ub_results = await unbrowse_client.fetch_context(
+                    session.get("prior_narrative", "")[:200] or dest_id, dest_id
+                )
+                if ub_results:
+                    unbrowse_context = unbrowse_client.format_for_prompt(ub_results)
+                    unbrowse_used = True
+            except Exception:
+                pass
+
+        # NLA agreement (reuse session_id as proposal_id for continuity)
+        nla_agreement_obj = nla_client.build_proposal_agreement(
+            proposal_id=req.session_id,
+            proposer_hotkey="demo-hotkey",
+            node_id=dest_id,
+            proposal_type="TRAVERSE",
+            bond_tao=0.0,
+            voting_deadline_block=0,
+        )
+
+        # Update session
         session["player_path"] = new_path
         session["current_node_id"] = req.destination_node_id
         session["prior_narrative"] = (
@@ -638,6 +764,16 @@ def create_dev_app() -> FastAPI:
             "knowledge_synthesis": result.get("knowledge_synthesis"),
             "player_path": new_path,
             "state": session["state"],
+            "scores": scores,
+            "emission_snapshot": emission_snapshot,
+            "graph_delta": graph_delta,
+            "responding_nodes": responding_nodes,
+            "unbrowse_used": unbrowse_used,
+            "unbrowse_context": unbrowse_context,
+            "nla_agreement": {
+                "agreement_text": nla_agreement_obj.agreement_text,
+                "status": nla_agreement_obj.status,
+            },
         }
 
     @app.get("/session/{session_id}")
@@ -650,6 +786,43 @@ def create_dev_app() -> FastAPI:
             "state": session["state"],
             "current_node_id": session["current_node_id"],
             "player_path": session["player_path"],
+        }
+
+    @app.get("/graph/edges")
+    async def graph_edges() -> list[dict]:
+        """Return all edges with weights and traversal counts."""
+        edges = []
+        for source_id, dests in graph_store._mem._adj.items():
+            for dest_id, edge in dests.items():
+                edges.append({
+                    "source_id": edge.source_id,
+                    "dest_id": edge.dest_id,
+                    "weight": edge.weight,
+                    "traversal_count": edge.traversal_count,
+                })
+        return edges
+
+    @app.get("/graph/node/{node_id}")
+    async def graph_node(node_id: str) -> dict:
+        """Return node metadata, state, and outgoing edges."""
+        node = graph_store._mem.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+        neighbours = graph_store.neighbours(node_id)
+        neighbour_edges = []
+        for nb in neighbours:
+            edge = graph_store._mem._adj.get(node_id, {}).get(nb)
+            if edge:
+                neighbour_edges.append({
+                    "dest_id": nb,
+                    "weight": edge.weight,
+                    "traversal_count": edge.traversal_count,
+                })
+        return {
+            "node_id": node.node_id,
+            "state": node.state,
+            "metadata": node.metadata,
+            "neighbours": neighbour_edges,
         }
 
     return app

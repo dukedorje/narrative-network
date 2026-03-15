@@ -68,6 +68,12 @@ restart-python service:
     kubectl -n {{namespace}} rollout restart deployment/{{service}}
     kubectl -n {{namespace}} rollout status deployment/{{service}} --timeout=90s
 
+# ── Local Dev ────────────────────────────────────────────────────────
+
+# Run the Python gateway locally (no Bittensor, in-process miners)
+gateway:
+    AXON_NETWORK=local uv run uvicorn orchestrator.gateway:app --host 0.0.0.0 --port 8080 --reload
+
 # ── K8s Manifests ─────────────────────────────────────────────────────
 
 # Apply all K8s manifests via kustomize

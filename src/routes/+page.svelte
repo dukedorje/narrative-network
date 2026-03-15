@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ForceGraph from '$lib/components/ForceGraph.svelte';
+	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
 
 	let { data } = $props();
 
@@ -104,7 +104,7 @@
 	</section>
 
 	<section class="graph-panel">
-		<ForceGraph entities={allEntities} edges={allEdges} onNodeClick={handleNodeClick} />
+		<GraphCanvas entities={allEntities} edges={allEdges} onNodeClick={handleNodeClick} />
 	</section>
 
 	<section class="info-panel">

@@ -1,14 +1,24 @@
 import { json } from '@sveltejs/kit';
-import { delve } from '$lib/server/bonfires';
 import type { RequestHandler } from './$types';
 
+// Bonfires.ai disabled for demo — return empty results
 export const POST: RequestHandler = async ({ request }) => {
-	const { query, numResults, centerNodeUuid } = await request.json();
+	const { query } = await request.json();
 
-	if (!query) {
-		return json({ error: 'query required' }, { status: 400 });
-	}
-
-	const result = await delve(query, { numResults: numResults ?? 20, centerNodeUuid });
-	return json(result);
+	return json({
+		success: true,
+		query: query ?? '',
+		num_results: 0,
+		episodes: [],
+		entities: [],
+		edges: [],
+		nodes: [],
+		graph_id: null,
+		center_node_uuid: null,
+		new_nodes_count: 0,
+		new_edges_count: 0,
+		cached: false,
+		error: null,
+		error_message: null
+	});
 };
