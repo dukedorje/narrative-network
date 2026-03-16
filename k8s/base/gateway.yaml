@@ -44,6 +44,9 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
+          volumeMounts:
+            - name: embedding-cache
+              mountPath: /data/embedding_cache
           resources:
             requests:
               memory: "1Gi"
@@ -51,6 +54,10 @@ spec:
             limits:
               memory: "4Gi"
               cpu: "4000m"
+      volumes:
+        - name: embedding-cache
+          emptyDir:
+            sizeLimit: 500Mi
       terminationGracePeriodSeconds: 30
 ---
 apiVersion: v1

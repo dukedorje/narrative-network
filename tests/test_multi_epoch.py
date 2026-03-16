@@ -5,7 +5,7 @@ from subnet.protocol import KnowledgeQuery, NarrativeHop
 from subnet.graph_store import GraphStore
 from seed.loader import load_topology
 from tests.conftest import (
-    MockMetagraph, MockWallet, MockSubtensor, MockDendrite
+    MockMetagraph, MockWallet, MockSubtensor, MockDendrite, FakeEmbedder
 )
 
 
@@ -75,6 +75,7 @@ def good_miner_setup():
     validator = Validator(
         wallet=wallet, subtensor=subtensor, dendrite=dendrite,
         metagraph=metagraph, graph_store=graph_store,
+        embedder=FakeEmbedder(dim=768),
     )
     return validator
 
@@ -100,6 +101,7 @@ def bad_miner_setup():
     validator = Validator(
         wallet=wallet, subtensor=subtensor, dendrite=dendrite,
         metagraph=metagraph, graph_store=graph_store,
+        embedder=FakeEmbedder(dim=768),
     )
     return validator
 

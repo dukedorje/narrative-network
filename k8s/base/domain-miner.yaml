@@ -30,6 +30,9 @@ spec:
                 name: narrative-network-config
             - secretRef:
                 name: narrative-network-secrets
+          volumeMounts:
+            - name: embedding-cache
+              mountPath: /data/embedding_cache
           resources:
             requests:
               memory: "64Mi"
@@ -50,6 +53,10 @@ spec:
               port: axon
             initialDelaySeconds: 15
             periodSeconds: 15
+      volumes:
+        - name: embedding-cache
+          emptyDir:
+            sizeLimit: 500Mi
       terminationGracePeriodSeconds: 30
 ---
 apiVersion: v1

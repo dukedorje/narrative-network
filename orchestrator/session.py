@@ -7,10 +7,23 @@ import time
 import uuid
 from typing import Any
 
-import bittensor as bt
+from subnet._bt_compat import _BT_AVAILABLE
 
-from subnet import NETUID
-from subnet.protocol import KnowledgeQuery, NarrativeHop, NodeID, SessionID
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
+
+
+if _BT_AVAILABLE:
+    from subnet.protocol import KnowledgeQuery, NarrativeHop, NodeID, SessionID
+else:
+    from subnet.protocol_local import (  # type: ignore
+        KnowledgeQuery,
+        NarrativeHop,
+        NodeID,
+        SessionID,
+    )
 
 from orchestrator.safety_guard import PathSafetyGuard
 

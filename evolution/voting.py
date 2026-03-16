@@ -10,17 +10,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
-import bittensor as bt
+from subnet._bt_compat import _BT_AVAILABLE
 
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
+
+from evolution.nla_settlement import NLASettlementClient
 from evolution.proposal import NodeProposal, ProposalStatus
-from evolution.nla_settlement import NLASettlementClient, NLAgreement
 from subnet.config import (
     VOTING_OPEN_BLOCKS,
-    VOTING_QUORUM_RATIO,
     VOTING_PASS_RATIO,
+    VOTING_QUORUM_RATIO,
 )
 
 log = logging.getLogger(__name__)
@@ -96,7 +101,9 @@ class BondReturn:
     loop is available. Callers do not need to await.
     """
 
-    def __init__(self, subtensor: bt.Subtensor) -> None:
+    def __init__(self, subtensor: "bt.Subtensor") -> None:
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for BondReturn")
         self.subtensor = subtensor
         self.nla_client = NLASettlementClient()
 
@@ -171,12 +178,14 @@ class VotingEngine:
 
     def __init__(
         self,
-        subtensor: bt.Subtensor,
+        subtensor: "bt.Subtensor",
         netuid: int,
         voting_open_blocks: int = VOTING_OPEN_BLOCKS,
         quorum_ratio: float = VOTING_QUORUM_RATIO,
         pass_ratio: float = VOTING_PASS_RATIO,
     ) -> None:
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for VotingEngine")
         self.subtensor = subtensor
         self.netuid = netuid
         self.voting_open_blocks = voting_open_blocks

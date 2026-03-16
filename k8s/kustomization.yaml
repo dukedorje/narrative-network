@@ -1,21 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: narrative-network
-
 resources:
-  - namespace.yaml
-  - configmap.yaml
-  - secrets.yaml
-  - gateway.yaml
-  - validator.yaml
-  - domain-miner.yaml
-  - narrative-miner.yaml
-  - frontend.yaml
-  - redis.yaml
-  - ipfs.yaml
-  - ingress.yaml
-
-commonLabels:
-  app.kubernetes.io/managed-by: kustomize
-  app.kubernetes.io/part-of: narrative-network
+  - base/

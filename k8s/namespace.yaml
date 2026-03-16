@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: narrative-network
-  labels:
-    app.kubernetes.io/name: narrative-network
-    app.kubernetes.io/part-of: narrative-network

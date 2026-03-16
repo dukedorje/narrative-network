@@ -10,6 +10,7 @@ import typing
 
 from subnet.config import (
     BETWEENNESS_WEIGHT,
+    CHOICE_CARD_MIN_COVERAGE,
     EDGE_WEIGHT_CAP,
     EDGE_WEIGHT_SUM_WEIGHT,
     LATENCY_MAX_PENALTY,
@@ -89,6 +90,68 @@ def score_quality(
     return 0.4 * path_coherence + 0.3 * directional_progress + 0.3 * length_score
 
 
+def score_choice_fairness(
+    offered_node_ids: list[str],
+    adjacent_node_ids: list[str],
+    min_coverage: float = CHOICE_CARD_MIN_COVERAGE,
+) -> float:
+    """Score choice card fairness against the actual graph neighbourhood (multiplier).
+
+    A coordinated set of narrative miners can starve nodes of traffic by never
+    offering them as choice cards, which eventually triggers their pruning.
+    This function returns a multiplier in [0, 1] that penalises miners who omit
+    a large fraction of adjacent nodes from their choice cards.
+
+    Parameters
+    ----------
+    offered_node_ids:
+        Node IDs present in the choice cards returned by the miner.
+        Only IDs that are also in adjacent_node_ids count toward coverage.
+    adjacent_node_ids:
+        The true set of outgoing neighbours for the current node, as reported
+        by the graph store. Must not be empty for a meaningful score.
+    min_coverage:
+        The minimum fraction of adjacent nodes that must be offered. If
+        coverage falls below this threshold the miner receives a reduced
+        multiplier. Defaults to CHOICE_CARD_MIN_COVERAGE (0.5).
+
+    Returns
+    -------
+    float
+        1.0  — all adjacent nodes offered (full coverage).
+        0.0  — no adjacent nodes offered at all.
+        Linearly interpolated between 0 and min_coverage, then clamped to
+        [0, 1]. Coverage above min_coverage returns 1.0 (no penalty).
+
+    Notes
+    -----
+    - When there are no adjacent nodes the node is a terminal — return 1.0
+      (no penalty; miner cannot be blamed for an empty neighbourhood).
+    - The minimum required offered count is min(3, len(adjacent_node_ids)),
+      consistent with MIN_CHOICE_CARDS in protocol.py.
+    """
+    if not adjacent_node_ids:
+        # Terminal node — no penalty possible
+        return 1.0
+
+    adjacent_set = set(adjacent_node_ids)
+    valid_offered = set(offered_node_ids) & adjacent_set
+    coverage = len(valid_offered) / len(adjacent_set)
+
+    # Hard floor: must offer at least min(3, len(adjacent)) choices
+    min_required = min(3, len(adjacent_node_ids))
+    if len(valid_offered) < min_required:
+        # Scale linearly from 0 (zero offered) to min_coverage (min_required offered)
+        return coverage / (min_required / len(adjacent_set))
+
+    # Above the minimum count: score by coverage fraction
+    if coverage >= min_coverage:
+        return 1.0
+
+    # Below min_coverage threshold: linear penalty from 0 at coverage=0 to 1 at coverage=min_coverage
+    return coverage / min_coverage
+
+
 def score_topology(
     betweenness_centrality: float,
     outgoing_edge_weight_sum: float,
@@ -103,15 +166,39 @@ def score_topology(
 
 
 def score_corpus(
-    merkle_root_matches: bool,
+    proof_valid: bool = False,
+    root_committed: bool = True,
+    merkle_root_matches: bool | None = None,
     partial_match: bool = False,
 ) -> float:
     """Score corpus integrity (weight: 0.15).
 
+    Parameters
+    ----------
+    proof_valid:
+        True iff the Merkle inclusion proof is mathematically valid (hash chain
+        from leaf through siblings equals the claimed root).
+    root_committed:
+        True iff the claimed root matches the previously committed root for this
+        miner.  Defaults to True so callers that have no prior commitment still
+        get credit for a valid proof.
+    merkle_root_matches:
+        Deprecated alias for proof_valid.  Ignored when proof_valid is
+        explicitly supplied.
+    partial_match:
+        Deprecated partial-credit flag retained for backward compatibility.
+
     Zero score triggers near-zero overall weight -> zero emission -> deregistration.
     """
-    if merkle_root_matches:
+    # Back-compat: if called the old way (positional bool), treat it as proof_valid.
+    if merkle_root_matches is not None and not proof_valid:
+        proof_valid = merkle_root_matches
+
+    if proof_valid and root_committed:
         return 1.0
+    elif proof_valid and not root_committed:
+        # Proof is mathematically sound but root changed — suspicious.
+        return 0.3
     elif partial_match:
         return 0.3
     else:

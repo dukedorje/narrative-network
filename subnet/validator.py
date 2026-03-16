@@ -8,21 +8,48 @@ from __future__ import annotations
 
 from copy import copy
 
-import bittensor as bt
-import torch
+import numpy as np
 
+from subnet._bt_compat import _BT_AVAILABLE, get_logger
+
+if _BT_AVAILABLE:
+    import bittensor as bt
+    import torch
+else:
+    bt = None  # type: ignore
+    torch = None  # type: ignore
+
+from domain.corpus import MerkleProver
 from subnet import NETUID, SPEC_VERSION
 from subnet.config import (
     CHALLENGE_SAMPLE_SIZE,
+    CHOICE_CARD_MIN_COVERAGE,
     CORPUS_WEIGHT,
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
     EPOCH_SLEEP_S,
     MOVING_AVERAGE_ALPHA,
     QUALITY_WEIGHT,
     TOPOLOGY_WEIGHT,
     TRAVERSAL_WEIGHT,
 )
-from subnet.protocol import KnowledgeQuery, NarrativeHop, WeightCommit
-from subnet.reward import score_corpus, score_quality, score_topology, score_traversal
+from subnet.emissions import MinerType
+
+if _BT_AVAILABLE:
+    from subnet.protocol import KnowledgeQuery, NarrativeHop, WeightCommit
+else:
+    from subnet.protocol_local import KnowledgeQuery, NarrativeHop  # type: ignore
+    WeightCommit = None  # type: ignore
+
+from subnet.reward import (
+    score_choice_fairness,
+    score_corpus,
+    score_quality,
+    score_topology,
+    score_traversal,
+)
+
+_log = get_logger(__name__)
 
 
 class Validator:
@@ -30,14 +57,17 @@ class Validator:
 
     def __init__(
         self,
-        config: bt.Config | None = None,
+        config: "bt.Config | None" = None,
         *,
-        wallet: bt.Wallet | None = None,
-        subtensor: bt.Subtensor | None = None,
-        dendrite: bt.Dendrite | None = None,
+        wallet: "bt.Wallet | None" = None,
+        subtensor: "bt.Subtensor | None" = None,
+        dendrite: "bt.Dendrite | None" = None,
         metagraph=None,
         graph_store=None,
+        embedder=None,
     ):
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for production Validator")
         self.config = config or bt.Config()
         self.wallet = wallet or bt.Wallet(config=self.config)
         self.subtensor = subtensor or bt.Subtensor(config=self.config)
@@ -49,12 +79,43 @@ class Validator:
         self.scores = torch.zeros(len(self.metagraph.hotkeys))
         self.step = 0
 
+        # Maps uid -> hex Merkle root string committed by that miner.
+        # Populated on first valid corpus challenge; subsequent challenges must
+        # match this root or receive a reduced score.
+        self._committed_roots: dict[int, str] = {}
+
+        # Cache of detected miner types; entries are evicted on hotkey change in
+        # resync_metagraph so newly registered miners are re-classified.
+        self._miner_types: dict[int, MinerType] = {}
+
         # Graph store for topology scoring and edge decay
         if graph_store is not None:
             self.graph_store = graph_store
         else:
             from subnet.graph_store import GraphStore
             self.graph_store = GraphStore(db_path=None)
+
+        # Embedder for real query embeddings (lazy-loads ONNX model on first use).
+        # An alternative embedder can be injected for testing.
+        if embedder is not None:
+            self.embedder = embedder
+        else:
+            from orchestrator.embedder import Embedder
+            self.embedder = Embedder(model_name=EMBEDDING_MODEL)
+
+        # Curated challenge queries covering diverse knowledge domains
+        self._challenge_queries = [
+            "quantum mechanics fundamentals",
+            "climate change ecosystem impacts",
+            "machine learning neural networks",
+            "ancient Roman history civilization",
+            "protein folding biochemistry",
+            "economic theory market dynamics",
+            "philosophy of consciousness mind",
+            "renewable energy solar wind",
+            "evolutionary biology natural selection",
+            "cryptography blockchain distributed systems",
+        ]
 
     # ------------------------------------------------------------------
     # Metagraph management
@@ -70,10 +131,12 @@ class Validator:
             new_scores[: len(self.scores)] = self.scores
             self.scores = new_scores
 
-        # Reset scores for UIDs where the hotkey changed
+        # Reset scores and type cache for UIDs where the hotkey changed
         for uid, (old, new) in enumerate(zip(previous_hotkeys, self.metagraph.hotkeys)):
             if old != new:
                 self.scores[uid] = 0
+                self._miner_types.pop(uid, None)
+                self._committed_roots.pop(uid, None)
 
         self.hotkeys = copy(self.metagraph.hotkeys)
 
@@ -106,9 +169,50 @@ class Validator:
             wait_for_inclusion=False,
         )
         if not response.success:
-            bt.logging.error(f"set_weights failed: {response.message}")
+            _log.error(f"set_weights failed: {response.message}")
         else:
-            bt.logging.info(f"set_weights success at step {self.step}")
+            _log.info(f"set_weights success at step {self.step}")
+
+    # ------------------------------------------------------------------
+    # Miner type detection
+    # ------------------------------------------------------------------
+
+    def _detect_miner_type(
+        self,
+        uid: int,
+        kq_resp: KnowledgeQuery,
+        nh_resp: NarrativeHop,
+    ) -> MinerType:
+        """Classify a miner based on which synapse it responded to.
+
+        Detection rules:
+        - KnowledgeQuery returned chunks or merkle_proof AND NarrativeHop
+          returned no passage -> DOMAIN miner
+        - NarrativeHop returned a passage AND KnowledgeQuery returned no
+          chunks/proof -> NARRATIVE miner
+        - Both returned valid data -> UNIFIED miner
+        - Neither returned valid data -> UNKNOWN (keep existing cache or UNKNOWN)
+
+        The result is cached in self._miner_types[uid] and reused across
+        epochs until the hotkey at that UID changes.
+        """
+        has_kq_response = bool(kq_resp.chunks or kq_resp.merkle_proof)
+        has_nh_response = bool(nh_resp.narrative_passage)
+
+        if has_kq_response and has_nh_response:
+            detected = MinerType.UNIFIED
+        elif has_kq_response:
+            detected = MinerType.DOMAIN
+        elif has_nh_response:
+            detected = MinerType.NARRATIVE
+        else:
+            # No valid response on either synapse — preserve existing classification
+            # if we have one, otherwise mark unknown.
+            detected = self._miner_types.get(uid, MinerType.UNKNOWN)
+
+        self._miner_types[uid] = detected
+        _log.debug(f"UID {uid} classified as {detected.value}")
+        return detected
 
     # ------------------------------------------------------------------
     # Epoch loop
@@ -129,19 +233,21 @@ class Validator:
             and self.metagraph.axons[uid].is_serving
         ]
         if not serving_uids:
-            bt.logging.warning(f"Epoch {self.step}: no serving miners found")
+            _log.warning(f"Epoch {self.step}: no serving miners found")
             self.step += 1
             return
 
         sample_size = min(CHALLENGE_SAMPLE_SIZE, len(serving_uids))
         challenge_uids = random.sample(serving_uids, sample_size)
-        bt.logging.info(f"Epoch {self.step}: challenging UIDs {challenge_uids}")
+        _log.info(f"Epoch {self.step}: challenging UIDs {challenge_uids}")
 
         # Collect axons for challenged miners
         challenge_axons = [self.metagraph.axons[uid] for uid in challenge_uids]
 
-        # b) Corpus challenges (score_corpus)
+        # b) Corpus challenges (score_corpus) — sent to all miners; narrative miners
+        #    will return no proof and receive corpus_score=1.0 (gate skipped for them).
         corpus_scores: dict[int, float] = {}
+        corpus_responses_by_uid: dict[int, KnowledgeQuery] = {}
         corpus_synapse = KnowledgeQuery(query_text="__corpus_challenge__")
         corpus_responses = await self.dendrite(
             axons=challenge_axons,
@@ -149,23 +255,45 @@ class Validator:
             timeout=12.0,
         )
         for uid, response in zip(challenge_uids, corpus_responses):
-            if response.merkle_proof is not None:
-                has_valid_structure = (
-                    isinstance(response.merkle_proof, dict)
-                    and "leaf_hash" in response.merkle_proof
-                    and "siblings" in response.merkle_proof
-                    and "root" in response.merkle_proof
-                )
-                corpus_scores[uid] = score_corpus(merkle_root_matches=has_valid_structure)
-            else:
-                corpus_scores[uid] = score_corpus(merkle_root_matches=False)
+            corpus_responses_by_uid[uid] = response
+            proof = response.merkle_proof
+            if not isinstance(proof, dict):
+                corpus_scores[uid] = score_corpus(proof_valid=False)
+                continue
 
-        # c) Traversal + Quality scoring via fresh challenges
+            claimed_root = proof.get("root", "")
+
+            # Mathematically verify the hash chain leaf -> siblings -> root.
+            proof_valid = MerkleProver.verify(proof, expected_root=claimed_root)
+
+            if proof_valid:
+                committed = self._committed_roots.get(uid)
+                if committed is None:
+                    # First valid proof: pin this root as the committed value.
+                    self._committed_roots[uid] = claimed_root
+                    root_committed = True
+                else:
+                    root_committed = claimed_root == committed
+                    if not root_committed:
+                        _log.warning(
+                            f"UID {uid} corpus root changed: expected {committed[:16]}… "
+                            f"got {claimed_root[:16]}…"
+                        )
+            else:
+                root_committed = False
+
+            corpus_scores[uid] = score_corpus(
+                proof_valid=proof_valid,
+                root_committed=root_committed,
+            )
+
+        # c) Traversal + Quality scoring + miner type detection via fresh challenges
         traversal_scores: dict[int, float] = {}
         quality_scores: dict[int, float] = {}
+        nh_responses_by_uid: dict[int, NarrativeHop] = {}
 
-        test_query_text = "quantum mechanics fundamentals"
-        test_query_embedding = [0.0] * 768  # placeholder
+        test_query_text = random.choice(self._challenge_queries)
+        test_query_embedding = self.embedder.embed_one(test_query_text)
 
         kq_synapse = KnowledgeQuery(
             query_text=test_query_text,
@@ -181,12 +309,27 @@ class Validator:
         for uid, kq_resp in zip(challenge_uids, kq_responses):
             start_time = _time.monotonic()
 
-            chunks_embedding = [0.0] * 768
-            domain_centroid = [0.0] * 768
+            zero_vec = [0.0] * EMBEDDING_DIM
 
             if kq_resp.chunks:
-                if kq_resp.domain_similarity is not None:
-                    domain_centroid = test_query_embedding  # approximation
+                chunk_texts = [
+                    c if isinstance(c, str) else (c.get("text") or c.get("content") or "")
+                    for c in kq_resp.chunks
+                ]
+                chunk_texts = [t for t in chunk_texts if t]
+                if chunk_texts:
+                    chunk_embeddings = self.embedder.embed(chunk_texts)
+                    # Mean-pool chunk embeddings to get a single representative vector
+                    arr = np.array(chunk_embeddings, dtype=float)
+                    mean_vec = (arr.mean(axis=0)).tolist()
+                    chunks_embedding = mean_vec
+                    domain_centroid = mean_vec
+                else:
+                    chunks_embedding = zero_vec
+                    domain_centroid = zero_vec
+            else:
+                chunks_embedding = zero_vec
+                domain_centroid = zero_vec
 
             process_time = _time.monotonic() - start_time
 
@@ -202,22 +345,91 @@ class Validator:
                 timeout=12.0,
             )
             nh_resp = nh_responses[0] if nh_responses else nh_synapse
+            nh_responses_by_uid[uid] = nh_resp
 
-            passage_embedding = nh_resp.passage_embedding or [0.0] * 768
-            traversal_scores[uid] = score_traversal(
-                chunks_embedding=chunks_embedding,
-                query_embedding=test_query_embedding,
-                domain_centroid=domain_centroid,
-                passage_embedding=passage_embedding,
-                process_time=process_time,
-            )
+            # Detect miner type from this epoch's responses
+            miner_type = self._detect_miner_type(uid, kq_resp, nh_resp)
 
-            quality_scores[uid] = score_quality(
+            passage_embedding = nh_resp.passage_embedding or [0.0] * EMBEDDING_DIM
+
+            # Domain miners: score on traversal (chunk quality) only; narrative quality
+            # uses a neutral passage embedding since they don't generate narrative.
+            # Narrative miners: score on narrative quality; traversal uses neutral values
+            # since they don't retrieve chunks.
+            # Unified / Unknown: score on all axes as designed.
+            if miner_type == MinerType.DOMAIN:
+                traversal_scores[uid] = score_traversal(
+                    chunks_embedding=chunks_embedding,
+                    query_embedding=test_query_embedding,
+                    domain_centroid=domain_centroid,
+                    passage_embedding=zero_vec,  # no passage; neutral
+                    process_time=process_time,
+                )
+                quality_scores[uid] = 0.5  # neutral; domain miners don't produce narrative
+            elif miner_type == MinerType.NARRATIVE:
+                traversal_scores[uid] = 0.5  # neutral; narrative miners don't retrieve chunks
+                raw_quality = score_quality(
+                    passage_embedding=passage_embedding,
+                    path_embeddings=[],
+                    destination_centroid=domain_centroid,
+                    source_centroid=test_query_embedding,
+                    passage_text=nh_resp.narrative_passage or "",
+                )
+                # Apply choice card fairness multiplier: penalise miners that omit
+                # adjacent nodes from their choice cards (traffic-steering attack).
+                offered_ids = [
+                    c.destination_node_id
+                    for c in (nh_resp.choice_cards or [])
+                ]
+                adjacent_ids = self.graph_store.neighbours(nh_synapse.destination_node_id)
+                fairness = score_choice_fairness(offered_ids, adjacent_ids)
+                if fairness < CHOICE_CARD_MIN_COVERAGE:
+                    _log.debug(
+                        f"UID {uid} choice card fairness {fairness:.3f} < "
+                        f"{CHOICE_CARD_MIN_COVERAGE} — applying quality penalty"
+                    )
+                quality_scores[uid] = raw_quality * fairness
+            else:
+                # UNIFIED or UNKNOWN: score on all axes
+                traversal_scores[uid] = score_traversal(
+                    chunks_embedding=chunks_embedding,
+                    query_embedding=test_query_embedding,
+                    domain_centroid=domain_centroid,
+                    passage_embedding=passage_embedding,
+                    process_time=process_time,
+                )
+                raw_quality = score_quality(
+                    passage_embedding=passage_embedding,
+                    path_embeddings=[],
+                    destination_centroid=domain_centroid,
+                    source_centroid=test_query_embedding,
+                    passage_text=nh_resp.narrative_passage or "",
+                )
+                # Apply choice card fairness multiplier for unified miners too
+                offered_ids = [
+                    c.destination_node_id
+                    for c in (nh_resp.choice_cards or [])
+                ]
+                adjacent_ids = self.graph_store.neighbours(nh_synapse.destination_node_id)
+                fairness = score_choice_fairness(offered_ids, adjacent_ids)
+                if fairness < CHOICE_CARD_MIN_COVERAGE:
+                    _log.debug(
+                        f"UID {uid} choice card fairness {fairness:.3f} < "
+                        f"{CHOICE_CARD_MIN_COVERAGE} — applying quality penalty"
+                    )
+                quality_scores[uid] = raw_quality * fairness
+
+            # Reinforce the edge traversed and record it for audit/replay
+            source_node_id = f"source-{self.step}"
+            dest_node_id = nh_synapse.destination_node_id
+            q_score = quality_scores[uid]
+            self.graph_store.reinforce_edge(source_node_id, dest_node_id, q_score)
+            self.graph_store.log_traversal(
+                session_id=f"epoch-{self.step}-uid-{uid}",
+                source_id=source_node_id,
+                dest_id=dest_node_id,
                 passage_embedding=passage_embedding,
-                path_embeddings=[],
-                destination_centroid=domain_centroid,
-                source_centroid=[0.0] * 768,
-                passage_text=nh_resp.narrative_passage or "",
+                scores={uid: q_score},
             )
 
         # d) Topology scoring from graph store
@@ -231,18 +443,27 @@ class Validator:
                 outgoing_edge_weight_sum=ew,
             )
 
-        # e) Aggregate via EmissionCalculator
+        # e) Aggregate via EmissionCalculator — pass miner_type so corpus gate is
+        #    bypassed for narrative miners that legitimately have no corpus.
         from subnet.emissions import EmissionCalculator, MinerScoreSnapshot
 
         snapshots = []
         for uid in challenge_uids:
+            uid_type = self._miner_types.get(uid, MinerType.UNKNOWN)
+            # Narrative miners default corpus_score to 1.0 (pass) since they have
+            # no corpus; the gate does not apply to them in EmissionCalculator.
+            if uid_type == MinerType.NARRATIVE:
+                c_score = 1.0
+            else:
+                c_score = corpus_scores.get(uid, 0.0)
             snapshots.append(MinerScoreSnapshot(
                 uid=uid,
                 traversal_score=traversal_scores.get(uid, 0.0),
                 quality_score=quality_scores.get(uid, 0.0),
                 topology_score=topology_scores.get(uid, 0.0),
-                corpus_score=corpus_scores.get(uid, 0.0),
+                corpus_score=c_score,
                 traversal_count=1,
+                miner_type=uid_type,
             ))
 
         calculator = EmissionCalculator()
@@ -258,9 +479,14 @@ class Validator:
         # Decay edges
         self.graph_store.decay_edges()
 
-        bt.logging.info(
-            f"Epoch {self.step}: scored {len(challenge_uids)} miners, "
-            f"weights set, edges decayed"
+        type_summary = {
+            t.value: sum(1 for uid in challenge_uids if self._miner_types.get(uid) == t)
+            for t in MinerType
+            if any(self._miner_types.get(uid) == t for uid in challenge_uids)
+        }
+        _log.info(
+            f"Epoch {self.step}: scored {len(challenge_uids)} miners "
+            f"{type_summary}, weights set, edges decayed"
         )
         self.step += 1
 
@@ -268,12 +494,12 @@ class Validator:
         import asyncio
         import time
 
-        bt.logging.info("Validator starting run_forever loop")
+        _log.info("Validator starting run_forever loop")
         while True:
             try:
                 asyncio.get_event_loop().run_until_complete(self.run_epoch())
             except Exception as e:
-                bt.logging.error(f"Epoch failed: {e}")
+                _log.error(f"Epoch failed: {e}")
             time.sleep(EPOCH_SLEEP_S)
 
 

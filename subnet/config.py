@@ -39,6 +39,11 @@ LATENCY_MAX_PENALTY: float = float(_env("LATENCY_MAX_PENALTY", 0.5))
 MIN_HOP_WORDS: int = int(_env("MIN_HOP_WORDS", 100))
 MAX_HOP_WORDS: int = int(_env("MAX_HOP_WORDS", 500))
 
+# Choice card fairness: miner must offer at least this fraction of adjacent nodes
+# as valid choice cards (0.5 = must offer at least half of adjacent nodes).
+# A miner scoring below this threshold receives a penalty multiplier on quality_score.
+CHOICE_CARD_MIN_COVERAGE: float = float(_env("CHOICE_CARD_MIN_COVERAGE", 0.5))
+
 # ---------------------------------------------------------------------------
 # Topology scoring
 # ---------------------------------------------------------------------------
@@ -49,8 +54,27 @@ EDGE_WEIGHT_CAP: int = int(_env("EDGE_WEIGHT_CAP", 50))
 # ---------------------------------------------------------------------------
 # Graph store
 # ---------------------------------------------------------------------------
-EDGE_DECAY_RATE: float = float(_env("EDGE_DECAY_RATE", 0.995))
+# Edge decay is applied once per epoch (EPOCH_SLEEP_S = 60s => ~1440 epochs/day).
+#
+# Decay math (rate r, floor f=0.01):
+#   - Epochs to floor  = log(f) / log(r)
+#   - Half-life epochs = log(0.5) / log(r)
+#
+# Old default 0.995: floor reached in ~920 epochs (~15 h). Too aggressive.
+#
+# New default 0.9996:
+#   - Floor reached in ~11 500 epochs (~8 days of zero traversal)
+#   - Half-life ~1 730 epochs (~1.2 days)
+#
+# Operators can tune via AXON_EDGE_DECAY_RATE. A higher value (closer to 1.0)
+# gives a longer half-life; a lower value kills idle edges faster.
+EDGE_DECAY_RATE: float = float(_env("EDGE_DECAY_RATE", 0.9996))
 EDGE_DECAY_FLOOR: float = float(_env("EDGE_DECAY_FLOOR", 0.01))
+
+# Derived constant for operator intuition (read-only; not env-overridable).
+# At 1440 epochs/day: half-life ≈ 1.2 days; floor reached ≈ 8 days.
+import math as _math
+EDGE_DECAY_HALF_LIFE_EPOCHS: int = round(_math.log(0.5) / _math.log(EDGE_DECAY_RATE))
 
 # ---------------------------------------------------------------------------
 # Validator
@@ -65,6 +89,7 @@ CHALLENGE_SAMPLE_SIZE: int = int(_env("CHALLENGE_SAMPLE_SIZE", 10))
 EMBEDDING_MODEL: str = str(_env("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2"))
 EMBEDDING_DIM: int = int(_env("EMBEDDING_DIM", 768))
 EMBEDDING_BATCH_SIZE: int = int(_env("EMBEDDING_BATCH_SIZE", 32))
+EMBEDDING_CACHE_DIR: str = str(_env("EMBEDDING_CACHE_DIR", "/data/embedding_cache"))
 
 # ---------------------------------------------------------------------------
 # Narrative miner (OpenRouter)
@@ -83,6 +108,9 @@ ORCHESTRATOR_MAX_HOPS: int = int(_env("ORCHESTRATOR_MAX_HOPS", 8))
 ORCHESTRATOR_MIN_MINERS: int = int(_env("ORCHESTRATOR_MIN_MINERS", 3))
 ORCHESTRATOR_TIMEOUT_S: float = float(_env("ORCHESTRATOR_TIMEOUT_S", 12.0))
 
+# Session TTL (seconds) — applies to both gateway and narrative session stores
+SESSION_TTL_S: int = int(_env("SESSION_TTL_S", 1800))
+
 # ---------------------------------------------------------------------------
 # Evolution / proposal / voting / pruning / integration
 # ---------------------------------------------------------------------------
@@ -97,9 +125,25 @@ VOTING_PASS_RATIO: float = float(_env("VOTING_PASS_RATIO", 0.60))
 INCUBATION_BLOCKS: int = int(_env("INCUBATION_BLOCKS", 1800))     # ~6 h
 
 # Pruning thresholds
+#
+# PRUNING_INTERVAL_BLOCKS is block-based (1 block ≈ 12 s on Bittensor mainnet):
+#   3600 blocks * 12 s/block = ~12 h between pruning runs.
+#
+# DEFAULT_WINDOW_SIZE and DEFAULT_COLLAPSE_CONSECUTIVE in evolution/pruning.py
+# are epoch-based (1 epoch = EPOCH_SLEEP_S = 60 s):
+#   window 720 epochs  = 720 * 60 s = ~12 h of score history
+#   collapse 24 epochs = 24 consecutive epochs below threshold ≈ 24 min
+#   (pruning_engine is called once per epoch by the validator loop)
+#
+# PRUNING_MIN_TRAVERSALS is measured over the window (720 epochs ≈ 12 h).
+# The old value of 5 was reasonable in absolute terms but the window was only
+# 8 epochs (~8 min), making the bar impossibly high during quiet periods.
+# With a 720-epoch window the same absolute count is much more forgiving.
+# Operators running very high-traffic subnets can raise this via
+# AXON_PRUNING_MIN_TRAVERSALS.
 PRUNING_MIN_EDGE_WEIGHT: float = float(_env("PRUNING_MIN_EDGE_WEIGHT", 0.05))
 PRUNING_MIN_TRAVERSALS: int = int(_env("PRUNING_MIN_TRAVERSALS", 5))
-PRUNING_INTERVAL_BLOCKS: int = int(_env("PRUNING_INTERVAL_BLOCKS", 3600))  # ~12 h
+PRUNING_INTERVAL_BLOCKS: int = int(_env("PRUNING_INTERVAL_BLOCKS", 3600))  # ~12 h at 12 s/block
 
 # Drift
 DRIFT_MAX_COSINE_DISTANCE: float = float(_env("DRIFT_MAX_COSINE_DISTANCE", 0.35))
@@ -156,6 +200,7 @@ class SubnetConfig:
     # Quality
     min_hop_words: int = MIN_HOP_WORDS
     max_hop_words: int = MAX_HOP_WORDS
+    choice_card_min_coverage: float = CHOICE_CARD_MIN_COVERAGE
 
     # Topology
     betweenness_weight: float = BETWEENNESS_WEIGHT
@@ -187,6 +232,7 @@ class SubnetConfig:
     orchestrator_max_hops: int = ORCHESTRATOR_MAX_HOPS
     orchestrator_min_miners: int = ORCHESTRATOR_MIN_MINERS
     orchestrator_timeout_s: float = ORCHESTRATOR_TIMEOUT_S
+    session_ttl_s: int = SESSION_TTL_S
 
     # Evolution
     proposal_min_bond_tao: float = PROPOSAL_MIN_BOND_TAO

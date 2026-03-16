@@ -76,7 +76,7 @@ def _score_topology(node_id: str, graph_store: "GraphStore") -> float:
     Betweenness is taken directly from brandes_betweenness (already in [0, 1]).
     Returns 0.0 if the node has no connections.
     """
-    all_nodes = list(graph_store._mem._adj.keys())
+    all_nodes = graph_store.get_connected_node_ids()
     if not all_nodes:
         return 0.0
 

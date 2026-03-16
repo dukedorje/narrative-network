@@ -14,10 +14,15 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
-import bittensor as bt
+from subnet._bt_compat import _BT_AVAILABLE
 
-from subnet.config import PROPOSAL_MIN_BOND_TAO, VOTING_OPEN_BLOCKS
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
+
 from evolution.nla_settlement import NLAgreement, NLASettlementClient
+from subnet.config import PROPOSAL_MIN_BOND_TAO, VOTING_OPEN_BLOCKS
 
 log = logging.getLogger(__name__)
 
@@ -118,11 +123,13 @@ class ProposalSubmitter:
 
     def __init__(
         self,
-        wallet: bt.Wallet,
-        subtensor: bt.Subtensor,
+        wallet: "bt.Wallet",
+        subtensor: "bt.Subtensor",
         netuid: int,
         min_bond_tao: float = PROPOSAL_MIN_BOND_TAO,
     ) -> None:
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for ProposalSubmitter")
         self.wallet = wallet
         self.subtensor = subtensor
         self.netuid = netuid

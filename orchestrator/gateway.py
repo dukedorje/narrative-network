@@ -16,21 +16,33 @@ try:
 except ImportError:
     pass
 
-import bittensor as bt
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from subnet._bt_compat import _BT_AVAILABLE
+
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
+
 from subnet import NETUID
 from subnet.graph_store import Edge, GraphStore, Node
-from subnet.protocol import NodeID, SessionID
+
+if _BT_AVAILABLE:
+    from subnet.protocol import NodeID, SessionID
+else:
+    from subnet.protocol_local import NodeID, SessionID  # type: ignore
 
 from orchestrator.arbiter import TraversalArbiter
 from orchestrator.embedder import Embedder
 from orchestrator.router import Router
 from orchestrator.safety_guard import PathSafetyGuard
 from orchestrator.session import OrchestratorSession, SessionState
+from orchestrator.session_store import GatewaySessionStore
+from subnet.metagraph_watcher import MetagraphWatcher, RegistrationEvent
 
 log = logging.getLogger(__name__)
 
@@ -201,6 +213,7 @@ def create_app(
     wallet: bt.Wallet,
     subtensor: bt.Subtensor,
     metagraph: bt.metagraph,
+    metagraph_watcher: MetagraphWatcher | None = None,
 ) -> FastAPI:
     """Create and return the configured FastAPI application."""
 
@@ -216,11 +229,58 @@ def create_app(
 
     _register_graph_endpoints(app, graph_store)
 
-    # In-memory session registry: session_id -> OrchestratorSession
-    _sessions: dict[SessionID, OrchestratorSession] = {}
+    # Redis-backed session store with in-memory fallback
+    from subnet.config import SESSION_TTL_S
+
+    _redis_url = os.environ.get("REDIS_URL")
+    _session_store = GatewaySessionStore(redis_url=_redis_url, ttl=SESSION_TTL_S)
     _arbiter = TraversalArbiter()
 
     dendrite = bt.Dendrite(wallet=wallet)
+
+    @app.on_event("startup")
+    async def _connect_session_store() -> None:
+        await _session_store.connect()
+
+    # ------------------------------------------------------------------
+    # MetagraphWatcher integration — keep the router node index in sync
+    # ------------------------------------------------------------------
+
+    def _on_registration_event(event: RegistrationEvent) -> None:
+        """Update the router index when miners register or deregister."""
+        if event.event_type == "deregistered":
+            router.deindex_miner(event.uid)
+            return
+        # For registrations we need the miner's declared node_id.
+        # Attempt a fast commitment fetch; fall back silently if unavailable.
+        try:
+            raw: str = subtensor.get_commitment(
+                netuid=NETUID, uid=event.uid, block=None
+            )
+            if raw:
+                router.index_miner(event.uid, event.axon_info, raw.strip())
+                log.info(
+                    "Router indexed uid=%d node_id=%s via commitment",
+                    event.uid,
+                    raw.strip(),
+                )
+        except Exception as exc:
+            log.debug(
+                "Could not fetch commitment for uid=%d: %s", event.uid, exc
+            )
+
+    if metagraph_watcher is not None:
+        metagraph_watcher.add_listener(_on_registration_event)
+
+    @app.on_event("startup")
+    async def _start_watcher() -> None:
+        if metagraph_watcher is not None:
+            await metagraph_watcher.start()
+
+    @app.on_event("shutdown")
+    async def _stop_watcher() -> None:
+        if metagraph_watcher is not None:
+            await metagraph_watcher.stop()
 
     # ------------------------------------------------------------------
     # POST /enter
@@ -231,7 +291,10 @@ def create_app(
         query_embedding = embedder.embed_one(req.query_text)
 
         # Broadcast KnowledgeQuery to all domain miners to find entry nodes
-        from subnet.protocol import KnowledgeQuery
+        if _BT_AVAILABLE:
+            from subnet.protocol import KnowledgeQuery
+        else:
+            from subnet.protocol_local import KnowledgeQuery  # type: ignore
 
         active_axons = [
             axon
@@ -253,6 +316,10 @@ def create_app(
             deserialize=False,
         )
         valid_responses = [r for r in responses if r.node_id is not None]
+
+        # Update the router node index from live responses so resolve_narrative_miner
+        # can route by node_id without needing an on-chain commitment fetch.
+        router.update_from_responses(responses, active_axons)
 
         ranked_nodes = router.rank_entry_nodes(
             query_embedding=query_embedding,
@@ -276,7 +343,6 @@ def create_app(
             metagraph=metagraph,
             safety_guard=safety_guard,
         )
-        _sessions[session.session_id] = session
 
         result = await session.enter(
             query_text=req.query_text,
@@ -287,6 +353,8 @@ def create_app(
 
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
+
+        await _session_store.set(session)
 
         return EnterResponse(
             session_id=result["session_id"],
@@ -304,7 +372,12 @@ def create_app(
 
     @app.post("/hop", response_model=HopResponse)
     async def hop(req: HopRequest) -> HopResponse:
-        session = _sessions.get(req.session_id)
+        session = await _session_store.get(
+            req.session_id,
+            dendrite=dendrite,
+            metagraph=metagraph,
+            safety_guard=safety_guard,
+        )
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -324,6 +397,8 @@ def create_app(
             destination_node_id=req.destination_node_id,
             axon=axon,
         )
+
+        await _session_store.set(session)
 
         # Run Arkhai arbiter to filter the next-hop candidate set
         raw_cards: list[dict] = result.get("choice_cards") or []
@@ -365,7 +440,12 @@ def create_app(
 
     @app.get("/session/{session_id}", response_model=SessionResponse)
     async def get_session(session_id: SessionID) -> SessionResponse:
-        session = _sessions.get(session_id)
+        session = await _session_store.get(
+            session_id,
+            dendrite=dendrite,
+            metagraph=metagraph,
+            safety_guard=safety_guard,
+        )
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         data = session.to_dict()
@@ -382,7 +462,12 @@ def create_app(
         The client can send JSON: {"destination_node_id": "<id>"} to trigger hops.
         The server pushes HopResponse-shaped JSON after each hop or state change.
         """
-        session = _sessions.get(session_id)
+        session = await _session_store.get(
+            session_id,
+            dendrite=dendrite,
+            metagraph=metagraph,
+            safety_guard=safety_guard,
+        )
         if session is None:
             await websocket.close(code=4004)
             return
@@ -413,6 +498,7 @@ def create_app(
                     continue
 
                 result = await session.hop(destination_node_id=dest_node, axon=axon)
+                await _session_store.set(session)
                 await websocket.send_json(result)
 
             # Final state push on terminal/error
@@ -430,10 +516,8 @@ def create_app(
         return {
             "status": "ok",
             "netuid": NETUID,
-            "active_sessions": len(
-                [s for s in _sessions.values() if s.state == SessionState.ACTIVE]
-            ),
-            "total_sessions": len(_sessions),
+            "active_sessions": await _session_store.count_active(),
+            "total_sessions": await _session_store.count_total(),
         }
 
     return app
@@ -448,6 +532,9 @@ class _LocalMinerPool:
 
     Loads seed corpora, embeds chunks, and serves retrieval requests
     without requiring a running domain miner.
+
+    Caches embedded chunks to disk so subsequent boots skip embedding.
+    Cache auto-invalidates when corpus files change (content hash).
     """
 
     def __init__(
@@ -463,16 +550,52 @@ class _LocalMinerPool:
         # node_id -> centroid embedding
         self._centroids: dict[str, np.ndarray] = {}
 
+        from subnet.config import EMBEDDING_CACHE_DIR
+
+        self._cache_dir = Path(EMBEDDING_CACHE_DIR)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+
         self._load_corpora(corpus_map)
 
+    def _content_hash(self, corpus_files: list[Path]) -> str:
+        """SHA-256 of corpus file contents for cache invalidation."""
+        import hashlib
+
+        h = hashlib.sha256()
+        for fpath in sorted(corpus_files):
+            if fpath.exists():
+                h.update(fpath.name.encode())
+                h.update(fpath.read_bytes())
+        return h.hexdigest()
+
     def _load_corpora(self, corpus_map: dict[str, list[Path]]) -> None:
+        import pickle
+
         for node_id, corpus_files in corpus_map.items():
+            cache_file = self._cache_dir / f"gateway_{node_id}.pkl"
+            hash_file = self._cache_dir / f"gateway_{node_id}.pkl.hash"
+            content_hash = self._content_hash(corpus_files)
+
+            # Try loading from cache
+            if cache_file.exists() and hash_file.exists():
+                cached_hash = hash_file.read_text().strip()
+                if cached_hash == content_hash:
+                    try:
+                        with open(cache_file, "rb") as f:
+                            cached = pickle.load(f)
+                        self._node_chunks[node_id] = cached["chunks"]
+                        self._centroids[node_id] = cached["centroid"]
+                        log.debug("Cache hit for node %s (%d chunks)", node_id, len(cached["chunks"]))
+                        continue
+                    except Exception as exc:
+                        log.warning("Cache load failed for %s: %s", node_id, exc)
+
+            # Cache miss — embed from scratch
             chunks: list[dict] = []
             texts: list[str] = []
             for fpath in corpus_files:
                 if fpath.exists():
                     content = fpath.read_text(encoding="utf-8", errors="replace")
-                    # Simple chunking: ~200 words per chunk
                     words = content.split()
                     for i in range(0, len(words), 160):
                         chunk_text = " ".join(words[i : i + 200])
@@ -490,11 +613,22 @@ class _LocalMinerPool:
                 if norm > 0:
                     centroid = centroid / norm
                 self._centroids[node_id] = centroid
+
+                # Save to cache
+                try:
+                    with open(cache_file, "wb") as f:
+                        pickle.dump({"chunks": chunks, "centroid": centroid}, f)
+                    hash_file.write_text(content_hash)
+                except Exception as exc:
+                    log.warning("Cache write failed for %s: %s", node_id, exc)
+
             self._node_chunks[node_id] = chunks
+
         log.info(
-            "LocalMinerPool: loaded %d nodes, %d total chunks",
+            "LocalMinerPool: loaded %d nodes, %d total chunks (cache dir: %s)",
             len(self._node_chunks),
             sum(len(c) for c in self._node_chunks.values()),
+            self._cache_dir,
         )
 
     def rank_entry_nodes(
@@ -649,21 +783,52 @@ class _LocalNarrator:
 
 
 def _validate_choice_cards(raw_cards: list[dict], valid_nodes: list[str]) -> list[dict]:
-    """Filter and normalize choice cards, keeping only those pointing to valid adjacent nodes."""
+    """Filter and normalize choice cards, keeping only those pointing to valid adjacent nodes.
+
+    Also enforces a minimum coverage requirement: if the LLM returned fewer than
+    min(3, len(valid_nodes)) valid cards, missing adjacent nodes are filled in with
+    default card text.  This prevents narrative miners from steering traffic by
+    selectively omitting adjacent nodes.
+    """
+    from subnet.config import CHOICE_CARD_MIN_COVERAGE
+
     valid_set = set(valid_nodes)
     validated: list[dict] = []
+    seen_dests: set[str] = set()
+
     for card in raw_cards:
         if not isinstance(card, dict):
             continue
         dest = card.get("destination_node_id", "")
-        if dest in valid_set:
+        if dest in valid_set and dest not in seen_dests:
+            seen_dests.add(dest)
             validated.append({
                 "text": card.get("text", f"Explore {dest}"),
                 "destination_node_id": dest,
                 "edge_weight_delta": float(card.get("edge_weight_delta", 0.0)),
                 "thematic_color": card.get("thematic_color", "#888888"),
             })
-    # If LLM returned no valid cards, generate defaults from adjacent nodes
+
+    # Enforce minimum coverage: must offer at least min(3, len(valid_nodes)) valid cards
+    # and at least CHOICE_CARD_MIN_COVERAGE fraction of all adjacent nodes.
+    if valid_nodes:
+        min_count = min(3, len(valid_nodes))
+        min_by_coverage = max(1, round(CHOICE_CARD_MIN_COVERAGE * len(valid_nodes)))
+        required = max(min_count, min_by_coverage)
+
+        if len(validated) < required:
+            # Fill in missing adjacent nodes with default card text
+            for nid in valid_nodes:
+                if nid not in seen_dests and len(validated) < required:
+                    seen_dests.add(nid)
+                    validated.append({
+                        "text": f"Explore {nid.replace('-', ' ')}",
+                        "destination_node_id": nid,
+                        "edge_weight_delta": 0.0,
+                        "thematic_color": "#6ee7b7",
+                    })
+
+    # Final fallback: if valid_nodes is empty or still no cards, generate from valid_nodes[:3]
     if not validated:
         for nid in valid_nodes[:3]:
             validated.append({
@@ -672,6 +837,7 @@ def _validate_choice_cards(raw_cards: list[dict], valid_nodes: list[str]) -> lis
                 "edge_weight_delta": 0.0,
                 "thematic_color": "#6ee7b7",
             })
+
     return validated
 
 
@@ -697,10 +863,17 @@ def create_dev_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    _sessions: dict[SessionID, dict[str, Any]] = {}
+    from subnet.config import SESSION_TTL_S
+
+    _redis_url = os.environ.get("REDIS_URL")
+    _session_store = GatewaySessionStore(redis_url=_redis_url, ttl=SESSION_TTL_S)
     _arbiter = TraversalArbiter()
 
     _register_graph_endpoints(app, graph_store)
+
+    @app.on_event("startup")
+    async def _connect_session_store() -> None:
+        await _session_store.connect()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -750,14 +923,14 @@ def create_dev_app() -> FastAPI:
         import uuid
 
         session_id = str(uuid.uuid4())
-        _sessions[session_id] = {
+        await _session_store.set_dict(session_id, {
             "session_id": session_id,
             "state": "active",
             "current_node_id": entry_node_id,
             "player_path": [entry_node_id],
             "prior_narrative": result.get("narrative_passage", ""),
             "query_embedding": query_embedding,
-        }
+        })
 
         return {
             "session_id": session_id,
@@ -771,7 +944,7 @@ def create_dev_app() -> FastAPI:
 
     @app.post("/hop", response_model=HopResponse)
     async def hop(req: HopRequest) -> dict[str, Any]:
-        session = _sessions.get(req.session_id)
+        session = await _session_store.get_dict(req.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         if session["state"] != "active":
@@ -783,6 +956,7 @@ def create_dev_app() -> FastAPI:
         ok, reason = safety_guard.check_path_length(player_path)
         if not ok:
             session["state"] = "terminal"
+            await _session_store.set_dict(req.session_id, session)
             raise HTTPException(status_code=400, detail=reason)
 
         safe = safety_guard.filter_candidates([req.destination_node_id], player_path)
@@ -801,10 +975,6 @@ def create_dev_app() -> FastAPI:
         adjacent = safety_guard.filter_candidates(
             graph_store.neighbours(req.destination_node_id), new_path
         )
-
-        # Check for terminal state (no adjacent nodes left)
-        if not adjacent:
-            session["state"] = "terminal"
 
         # Generate narrative hop
         result = await narrator.generate_hop(
@@ -837,16 +1007,16 @@ def create_dev_app() -> FastAPI:
         else:
             choice_cards = raw_cards
 
-        # Update session
+        # Update and persist session
         passage = result.get("narrative_passage", "")
         session["player_path"] = new_path
         session["current_node_id"] = req.destination_node_id
         session["prior_narrative"] = (
             session["prior_narrative"] + "\n\n" + passage
         ).strip()
-
         if not adjacent:
             session["state"] = "terminal"
+        await _session_store.set_dict(req.session_id, session)
 
         return {
             "session_id": req.session_id,
@@ -860,7 +1030,7 @@ def create_dev_app() -> FastAPI:
 
     @app.get("/session/{session_id}")
     async def get_session(session_id: str) -> dict[str, Any]:
-        session = _sessions.get(session_id)
+        session = await _session_store.get_dict(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -893,7 +1063,6 @@ def main() -> None:
             reload=False,
         )
     else:
-        import bittensor as bt
         from subnet import NETUID as _netuid
 
         config = bt.Config()
@@ -905,6 +1074,7 @@ def main() -> None:
         embedder = Embedder()
         router = Router(graph_store=graph_store, metagraph=metagraph)
         safety_guard = PathSafetyGuard(graph_store=graph_store)
+        watcher = MetagraphWatcher(subtensor=subtensor, netuid=_netuid)
 
         _app = create_app(
             graph_store=graph_store,
@@ -914,6 +1084,7 @@ def main() -> None:
             wallet=wallet,
             subtensor=subtensor,
             metagraph=metagraph,
+            metagraph_watcher=watcher,
         )
         uvicorn.run(_app, host="0.0.0.0", port=8080)
 

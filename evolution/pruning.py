@@ -20,11 +20,23 @@ from subnet.config import (
 
 log = logging.getLogger(__name__)
 
-# Defaults configurable per-engine
-DEFAULT_WINDOW_SIZE = 8          # epochs
+# Defaults configurable per-engine.
+# Timescale: 1 epoch = EPOCH_SLEEP_S = 60 s (validator loop cadence).
+#
+# DEFAULT_WINDOW_SIZE = 720 epochs = ~12 hours of score history.
+# Old value was 8 (~8 min), causing nodes to be evaluated on almost no data.
+#
+# DEFAULT_COLLAPSE_CONSECUTIVE = 24 epochs = ~24 minutes of consecutive
+# poor performance before collapse is triggered.
+# Old value was 3 (~3 min), far too short for transient quiet periods.
+#
+# Note: PRUNING_INTERVAL_BLOCKS (in subnet/config.py) controls how often the
+# validator *calls* the pruning engine and uses block time (~12 s/block), not
+# epoch time. The window/collapse constants here are epoch-counted.
+DEFAULT_WINDOW_SIZE = 720         # epochs (~12 h at 60 s/epoch)
 DEFAULT_WARNING_THRESHOLD = 0.35  # score below this triggers WARNING
 DEFAULT_DECAY_THRESHOLD = 0.20   # score below this escalates to DECAYING
-DEFAULT_COLLAPSE_CONSECUTIVE = 3  # consecutive DECAYING epochs -> COLLAPSED
+DEFAULT_COLLAPSE_CONSECUTIVE = 24  # consecutive DECAYING epochs -> COLLAPSED (~24 min)
 
 
 # ---------------------------------------------------------------------------

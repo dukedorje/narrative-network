@@ -74,6 +74,90 @@ restart-python service:
 gateway:
     AXON_NETWORK=local uv run uvicorn orchestrator.gateway:app --host 0.0.0.0 --port 8080 --reload
 
+# ── Local K8s (kind) ────────────────────────────────────────────────
+
+kind_cluster := "narrative-network"
+
+# Full local K8s stack: create cluster, build images, load, deploy
+# Access at http://localhost:3000 (frontend) and http://localhost:8080 (gateway API)
+local: _local-cluster _local-build _local-load _local-secrets _local-deploy
+    @echo ""
+    @echo "Local K8s stack is up!"
+    @echo "  Frontend: http://localhost:3000"
+    @echo "  Gateway:  http://localhost:8080"
+    @echo "  Status:   just local-status"
+    @echo "  Logs:     just local-logs <service>"
+    @echo "  Teardown: just local-down"
+
+# Rebuild and redeploy (skip cluster creation)
+local-redeploy: _local-build _local-load _local-deploy
+
+# Create kind cluster (idempotent)
+_local-cluster:
+    #!/usr/bin/env bash
+    if kind get clusters 2>/dev/null | grep -q "^{{kind_cluster}}$"; then
+        echo "Kind cluster '{{kind_cluster}}' already exists"
+    else
+        kind create cluster --name {{kind_cluster}} --config k8s/local/kind-config.yaml
+    fi
+    kubectl config use-context kind-{{kind_cluster}}
+
+# Build all local images
+_local-build:
+    docker build -f Dockerfile.python --target gateway -t narrative-network-gateway:latest .
+    docker build -f Dockerfile.python --target domain-miner -t narrative-network-domain-miner:latest .
+    docker build -f Dockerfile.python --target narrative-miner -t narrative-network-narrative-miner:latest .
+    docker build -f Dockerfile.frontend -t narrative-network-frontend:latest .
+
+# Load images into kind
+_local-load:
+    kind load docker-image --name {{kind_cluster}} \
+        narrative-network-gateway:latest \
+        narrative-network-domain-miner:latest \
+        narrative-network-narrative-miner:latest \
+        narrative-network-frontend:latest
+
+# Create secrets from .env (idempotent)
+_local-secrets:
+    #!/usr/bin/env bash
+    kubectl config use-context kind-{{kind_cluster}}
+    kubectl apply -f k8s/base/namespace.yaml
+    if [ -f .env ]; then
+        grep -v '^#' .env | grep -v '^\s*$' | \
+            awk -F= '!seen[$1]++ || 1 { last[$1]=$0 } END { for (k in last) print last[k] }' > /tmp/clean.env
+        kubectl -n {{namespace}} create secret generic narrative-network-secrets \
+            --from-env-file=/tmp/clean.env \
+            --dry-run=client -o yaml | kubectl apply -f -
+        rm /tmp/clean.env
+        echo "Secrets applied from .env"
+    else
+        echo "No .env file found — creating empty secret"
+        kubectl -n {{namespace}} create secret generic narrative-network-secrets \
+            --dry-run=client -o yaml | kubectl apply -f -
+    fi
+
+# Apply local kustomize overlay
+_local-deploy:
+    kubectl config use-context kind-{{kind_cluster}}
+    kubectl apply -k k8s/local/
+    @echo "Waiting for rollouts..."
+    kubectl -n {{namespace}} rollout status deployment/frontend --timeout=120s
+    kubectl -n {{namespace}} rollout status deployment/gateway --timeout=300s
+
+# Show local cluster status
+local-status:
+    kubectl config use-context kind-{{kind_cluster}}
+    kubectl -n {{namespace}} get pods,svc
+
+# Show local logs
+local-logs service="frontend":
+    kubectl config use-context kind-{{kind_cluster}}
+    kubectl -n {{namespace}} logs deployment/{{service}} -f
+
+# Delete local kind cluster
+local-down:
+    kind delete cluster --name {{kind_cluster}}
+
 # ── K8s Manifests ─────────────────────────────────────────────────────
 
 # Apply all K8s manifests via kustomize

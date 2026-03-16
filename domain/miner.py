@@ -7,17 +7,29 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
-import bittensor as bt
 import numpy as np
+
+from subnet._bt_compat import _BT_AVAILABLE
+
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
 
 from domain.corpus import Chunk, CorpusLoader, MerkleProver
 from subnet import NETUID
 from subnet.config import (
+    EMBEDDING_CACHE_DIR,
     EMBEDDING_MODEL,
     UNBROWSE_CORPUS_THRESHOLD,
 )
-from subnet.protocol import KnowledgeQuery
+
+if _BT_AVAILABLE:
+    from subnet.protocol import KnowledgeQuery
+else:
+    from subnet.protocol_local import KnowledgeQuery  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -27,11 +39,13 @@ class DomainMiner:
 
     def __init__(
         self,
-        config: bt.Config | None = None,
+        config: "bt.Config | None" = None,
         corpus_dir: str | None = None,
         node_id: str | None = None,
         whitelist_hotkeys: list[str] | None = None,
     ) -> None:
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for production DomainMiner")
         self.config = config or bt.Config()
         self.wallet = bt.Wallet(config=self.config)
         self.subtensor = bt.Subtensor(config=self.config)
@@ -65,9 +79,13 @@ class DomainMiner:
 
     def _load_corpus(self, corpus_dir: str) -> None:
         log.info("Loading corpus from %s", corpus_dir)
+        cache_dir = Path(EMBEDDING_CACHE_DIR)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_name = Path(corpus_dir).name or "corpus"
         loader = CorpusLoader(
             corpus_dir=corpus_dir,
             model_name=EMBEDDING_MODEL,
+            cache_path=cache_dir / f"{cache_name}.pkl",
         )
         self.chunks = loader.load()
         self.centroid = loader.centroid

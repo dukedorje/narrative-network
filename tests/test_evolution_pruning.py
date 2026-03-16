@@ -90,11 +90,15 @@ class TestScoreWindow:
 class TestPruningEngine:
     @pytest.fixture
     def engine(self):
+        # Use a small window and collapse_consecutive=3 for fast test execution.
+        # Production defaults (window_size=720, collapse_consecutive=24) are
+        # tested via the constants import; this fixture validates state-machine
+        # transitions with minimal iteration count.
         return PruningEngine(
             window_size=4,
             warning_threshold=DEFAULT_WARNING_THRESHOLD,
             decay_threshold=DEFAULT_DECAY_THRESHOLD,
-            collapse_consecutive=DEFAULT_COLLAPSE_CONSECUTIVE,
+            collapse_consecutive=3,
             min_traversals=2,
         )
 
@@ -132,7 +136,9 @@ class TestPruningEngine:
 
     def test_consecutive_decaying_triggers_collapse(self, engine):
         engine.register_node("n1")
-        # Push 4 epochs of very low scores (below decay_threshold=0.20)
+        # Push 4 epochs of very low scores (below decay_threshold=0.20).
+        # The fixture uses collapse_consecutive=3, so collapse fires once the
+        # window accumulates 3+ consecutive entries below the decay threshold.
         for epoch in range(4):
             engine.push_scores(
                 epoch,

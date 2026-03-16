@@ -13,7 +13,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-import bittensor as bt
+from subnet._bt_compat import _BT_AVAILABLE
+
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
 
 from subnet import NETUID
 

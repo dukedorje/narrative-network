@@ -90,6 +90,11 @@ class _MemoryGraph:
         with self._lock:
             return [n.node_id for n in self._nodes.values() if n.state == "Live"]
 
+    def get_connected_node_ids(self) -> list[str]:
+        """Return IDs of all nodes that have at least one outgoing edge."""
+        with self._lock:
+            return list(self._adj.keys())
+
     # --- Edges ---
 
     def upsert_edge(self, source_id: str, dest_id: str, weight: float = 1.0) -> Edge:
@@ -350,6 +355,10 @@ class GraphStore:
     def get_live_node_ids(self) -> list[str]:
         """Return all node IDs in Live state."""
         return self._mem.get_live_node_ids()
+
+    def get_connected_node_ids(self) -> list[str]:
+        """Return IDs of all nodes that participate in at least one outgoing edge."""
+        return self._mem.get_connected_node_ids()
 
     def bulk_load(self, nodes: list[dict], edges: list[dict]) -> None:
         """Bulk-insert nodes and edges into the in-memory graph."""

@@ -12,7 +12,12 @@ import logging
 import os
 import time
 
-import bittensor as bt
+from subnet._bt_compat import _BT_AVAILABLE
+
+if _BT_AVAILABLE:
+    import bittensor as bt
+else:
+    bt = None  # type: ignore
 
 from domain.narrative.prompt import build_prompt, fits_in_context
 from domain.narrative.session_store import SessionStore
@@ -23,7 +28,11 @@ from subnet.config import (
     NARRATIVE_TEMPERATURE,
     OPENROUTER_BASE_URL,
 )
-from subnet.protocol import ChoiceCard, NarrativeHop
+
+if _BT_AVAILABLE:
+    from subnet.protocol import ChoiceCard, NarrativeHop
+else:
+    from subnet.protocol_local import ChoiceCard, NarrativeHop  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -50,12 +59,14 @@ class NarrativeMiner:
 
     def __init__(
         self,
-        config: bt.Config | None = None,
+        config: "bt.Config | None" = None,
         persona: str = "neutral",
         node_id: str | None = None,
         whitelist_hotkeys: list[str] | None = None,
         redis_url: str | None = _DEFAULT_REDIS_URL,
     ) -> None:
+        if not _BT_AVAILABLE:
+            raise ImportError("bittensor is required for production NarrativeMiner")
         self.config = config or bt.Config()
         self.wallet = bt.Wallet(config=self.config)
         self.subtensor = bt.Subtensor(config=self.config)

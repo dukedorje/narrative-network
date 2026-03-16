@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from subnet.config import EMBEDDING_MODEL, EMBEDDING_DIM
+from subnet.config import EMBEDDING_CACHE_DIR, EMBEDDING_MODEL, EMBEDDING_DIM
 
 log = logging.getLogger(__name__)
 
@@ -125,21 +125,55 @@ class CorpusLoader:
     # ------------------------------------------------------------------
 
     def load(self) -> list[Chunk]:
-        """Load (or restore from cache) all chunks with embeddings."""
+        """Load (or restore from cache) all chunks with embeddings.
+
+        Uses a content hash of corpus files to invalidate the cache
+        automatically when source documents change.
+        """
+        content_hash = self._corpus_content_hash()
+
         if self.cache_path and self.cache_path.exists():
-            log.info("Restoring corpus from cache %s", self.cache_path)
-            self.chunks = self._load_cache()
-        else:
-            self.chunks = self._load_from_disk()
-            self._embed_chunks()
-            if self.cache_path:
-                self._save_cache()
+            cached_hash = self._read_cache_hash()
+            if cached_hash == content_hash:
+                log.info("Restoring corpus from cache %s (hash=%s…)", self.cache_path, content_hash[:12])
+                self.chunks = self._load_cache()
+                self.centroid = self._compute_centroid()
+                return self.chunks
+            log.info("Cache stale (corpus changed), re-embedding")
+
+        self.chunks = self._load_from_disk()
+        self._embed_chunks()
+        if self.cache_path:
+            self._save_cache()
+            self._write_cache_hash(content_hash)
         self.centroid = self._compute_centroid()
         return self.chunks
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _corpus_content_hash(self) -> str:
+        """SHA-256 hash of all corpus file contents + model name for cache invalidation."""
+        h = hashlib.sha256()
+        h.update(self.model_name.encode())
+        for path in sorted(self.corpus_dir.iterdir()):
+            if path.suffix in {".txt", ".md"}:
+                h.update(path.name.encode())
+                h.update(path.read_bytes())
+        return h.hexdigest()
+
+    def _read_cache_hash(self) -> str:
+        """Read the stored content hash from the cache hash file."""
+        hash_path = Path(str(self.cache_path) + ".hash")
+        if hash_path.exists():
+            return hash_path.read_text().strip()
+        return ""
+
+    def _write_cache_hash(self, content_hash: str) -> None:
+        """Write content hash alongside the cache file."""
+        hash_path = Path(str(self.cache_path) + ".hash")
+        hash_path.write_text(content_hash)
 
     def _load_from_disk(self) -> list[Chunk]:
         chunks: list[Chunk] = []

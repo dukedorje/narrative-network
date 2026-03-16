@@ -6,7 +6,7 @@ from subnet.protocol import KnowledgeQuery, NarrativeHop
 from subnet.graph_store import GraphStore
 from seed.loader import load_topology
 from tests.conftest import (
-    MockMetagraph, MockWallet, MockSubtensor, MockDendrite
+    MockMetagraph, MockWallet, MockSubtensor, MockDendrite, FakeEmbedder
 )
 
 
@@ -79,6 +79,7 @@ def integrated_setup():
         dendrite=dendrite,
         metagraph=metagraph,
         graph_store=graph_store,
+        embedder=FakeEmbedder(dim=768),
     )
 
     return validator, dendrite, subtensor, graph_store
