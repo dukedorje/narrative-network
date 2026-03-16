@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import TraverseGraph from '$lib/components/traverse/TraverseGraph.svelte';
 	import InnerViewPanel from '$lib/components/traverse/InnerViewPanel.svelte';
 
@@ -34,6 +36,17 @@
 		'deep ocean ecosystems',
 		'artificial general intelligence'
 	];
+
+	// Auto-start traversal if ?q= param is present
+	$effect(() => {
+		const q = page.url.searchParams.get('q');
+		if (q && sessionState === 'idle' && !loading) {
+			searchQuery = q;
+			// Clear the query param so refresh doesn't re-trigger
+			goto('/traverse', { replaceState: true, keepFocus: true });
+			handleSearch();
+		}
+	});
 
 	// Auto-scroll narrative area to bottom when new passages arrive
 	$effect(() => {
@@ -139,7 +152,7 @@
 <div class="traverse-page">
 	{#if sessionState === 'idle'}
 		<!-- ── Splash / Hero ─────────────────────────────────────────── -->
-		<section class="search-bar">
+		<section class="search-bar" in:fly={{ y: -20, duration: 400, easing: cubicOut }}>
 			<form onsubmit={handleSearch} class="search-form">
 				<input
 					type="text"
@@ -155,24 +168,29 @@
 		</section>
 
 		{#if errorMessage}
-			<div class="error-banner">{errorMessage}</div>
+			<div class="error-banner" in:fade={{ duration: 300 }}>{errorMessage}</div>
 		{/if}
 
 		<div class="hero">
 			<div class="hero-content">
-				<div class="hero-badge">Narrative Network</div>
-				<h1 class="hero-title">Futograph</h1>
-				<p class="hero-subtitle">Navigate the living knowledge graph</p>
-				<div class="suggested-queries">
+				<div class="hero-badge" in:fade={{ duration: 500, delay: 100 }}>Narrative Network</div>
+				<h1 class="hero-title" in:fly={{ y: 20, duration: 500, delay: 200, easing: cubicOut }}>Futograph</h1>
+				<p class="hero-subtitle" in:fly={{ y: 20, duration: 500, delay: 300, easing: cubicOut }}>Navigate the living knowledge graph</p>
+				<div class="suggested-queries" in:fly={{ y: 16, duration: 500, delay: 400, easing: cubicOut }}>
 					<span class="suggest-label">Try:</span>
-					{#each suggestedQueries as q}
-						<button class="suggest-chip" onclick={() => pickSuggestion(q)} disabled={loading}>
+					{#each suggestedQueries as q, i}
+						<button
+							class="suggest-chip"
+							onclick={() => pickSuggestion(q)}
+							disabled={loading}
+							in:fly={{ y: 12, duration: 350, delay: 500 + i * 70, easing: cubicOut }}
+						>
 							{q}
 						</button>
 					{/each}
 				</div>
 			</div>
-			<div class="hero-graph">
+			<div class="hero-graph" in:fade={{ duration: 600, delay: 400 }}>
 				<TraverseGraph nodes={data.nodes} edges={data.edges} playerPath={[]} currentNodeId={null} />
 			</div>
 		</div>
@@ -389,7 +407,7 @@
 	.hero-title {
 		font-size: 52px;
 		font-weight: 800;
-		letter-spacing: -0.03em;
+		letter-spacing: -0.01em;
 		color: #e2e8f0;
 		margin: 0;
 		line-height: 1;
