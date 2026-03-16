@@ -1,0 +1,71 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: domain-miner
+  namespace: narrative-network
+  labels:
+    app: domain-miner
+    app.kubernetes.io/part-of: narrative-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: domain-miner
+  template:
+    metadata:
+      labels:
+        app: domain-miner
+    spec:
+      containers:
+        - name: domain-miner
+          image: narrative-network-domain-miner:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: axon
+              containerPort: 8091
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: narrative-network-config
+            - secretRef:
+                name: narrative-network-secrets
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: axon
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: axon
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: domain-miner
+  namespace: narrative-network
+  labels:
+    app: domain-miner
+    app.kubernetes.io/part-of: narrative-network
+spec:
+  selector:
+    app: domain-miner
+  ports:
+    - name: axon
+      port: 8091
+      targetPort: axon
+      protocol: TCP
+  type: ClusterIP
