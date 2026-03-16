@@ -593,6 +593,7 @@ class _LocalNarrator:
 
         client = self._get_client()
         try:
+            log.info("Narrator: calling model=%s max_tokens=%d for node %s", self._model, self._max_tokens, destination_node_id)
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -604,11 +605,16 @@ class _LocalNarrator:
                 response_format={"type": "json_object"},
             )
             raw = response.choices[0].message.content or ""
+            if not raw:
+                log.warning("Narrator: model %s returned empty content (finish_reason=%s, routed_model=%s)",
+                            self._model, response.choices[0].finish_reason, getattr(response, 'model', 'unknown'))
+                return self._placeholder(destination_node_id, adjacent_nodes or [])
             result = json.loads(raw)
-            log.info("LLM generated passage for %s (%d chars)", destination_node_id, len(result.get("narrative_passage", "")))
+            log.info("LLM generated passage for %s (%d chars, model=%s)", destination_node_id,
+                     len(result.get("narrative_passage", "")), getattr(response, 'model', self._model))
             return result
         except json.JSONDecodeError as exc:
-            log.warning("Narrator: JSON parse error: %s", exc)
+            log.warning("Narrator: JSON parse error: %s (raw=%r)", exc, raw[:200] if raw else "empty")
             return self._placeholder(destination_node_id, adjacent_nodes or [])
         except Exception as exc:
             log.error("Narrator: generation error: %s", exc)
@@ -890,7 +896,7 @@ def main() -> None:
 
         graph_store = GraphStore()
         embedder = Embedder()
-        router = Router(graph_store=graph_store, embedder=embedder)
+        router = Router(graph_store=graph_store, metagraph=metagraph)
         safety_guard = PathSafetyGuard(graph_store=graph_store)
 
         _app = create_app(
