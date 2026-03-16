@@ -1,29 +1,36 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim AS builder
+
+# =============================================================================
+# Common builder base — system deps, uv, project metadata
+# =============================================================================
+FROM python:3.12-slim AS builder-common
 
 WORKDIR /app
 
-# System deps for building native extensions (builder only)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Dependencies layer — only invalidated when pyproject.toml or uv.lock change
 COPY pyproject.toml uv.lock README.md ./
 
-# Create minimal package stubs so uv sync can resolve the project entry
+# Minimal package stubs so uv sync can resolve the project entry
 RUN mkdir -p subnet domain orchestrator evolution seed && \
     touch subnet/__init__.py domain/__init__.py orchestrator/__init__.py \
           evolution/__init__.py seed/__init__.py
 
-# Install deps only (skip installing the project itself) — cached across code changes
+ENV UV_LINK_MODE=copy
+
+# =============================================================================
+# Light builder — base deps only (no ML extras)
+# For: validator, narrative-miner
+# =============================================================================
+FROM builder-common AS builder-light
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Source layer — changes frequently, but deps layer above stays cached
 COPY subnet/ subnet/
 COPY domain/ domain/
 COPY orchestrator/ orchestrator/
@@ -31,46 +38,84 @@ COPY evolution/ evolution/
 COPY seed/ seed/
 COPY docs/corpora/ docs/corpora/
 
-# Install the project itself (deps already present, this is instant)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
-# --- Runtime base (no compiler toolchain, smaller image) ---
+# =============================================================================
+# ML builder — base deps + onnxruntime/tokenizers/huggingface-hub
+# For: gateway, domain-miner
+# =============================================================================
+FROM builder-common AS builder-ml
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra ml
+
+COPY subnet/ subnet/
+COPY domain/ domain/
+COPY orchestrator/ orchestrator/
+COPY evolution/ evolution/
+COPY seed/ seed/
+COPY docs/corpora/ docs/corpora/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --extra ml
+
+# =============================================================================
+# Runtime bases
+# =============================================================================
+
+# --- Light runtime (no ML deps) ---
+FROM python:3.12-slim AS runtime-light
+
+WORKDIR /app
+
+COPY --from=builder-light /app/.venv /app/.venv
+COPY --from=builder-light /app/subnet /app/subnet
+COPY --from=builder-light /app/domain /app/domain
+COPY --from=builder-light /app/orchestrator /app/orchestrator
+COPY --from=builder-light /app/evolution /app/evolution
+COPY --from=builder-light /app/seed /app/seed
+COPY --from=builder-light /app/docs /app/docs
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
+
+# --- Full runtime (with ML deps) ---
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
-# Copy the venv with all installed packages from builder
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder-ml /app/.venv /app/.venv
+COPY --from=builder-ml /app/subnet /app/subnet
+COPY --from=builder-ml /app/domain /app/domain
+COPY --from=builder-ml /app/orchestrator /app/orchestrator
+COPY --from=builder-ml /app/evolution /app/evolution
+COPY --from=builder-ml /app/seed /app/seed
+COPY --from=builder-ml /app/docs /app/docs
 
-# Copy application source
-COPY --from=builder /app/subnet /app/subnet
-COPY --from=builder /app/domain /app/domain
-COPY --from=builder /app/orchestrator /app/orchestrator
-COPY --from=builder /app/evolution /app/evolution
-COPY --from=builder /app/seed /app/seed
-COPY --from=builder /app/docs /app/docs
-
-# Put venv on PATH so python/uvicorn resolve from there
 ENV PATH="/app/.venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/.venv"
 
-# --- Gateway ---
+# =============================================================================
+# Application targets
+# =============================================================================
+
+# --- Gateway (needs ML for embeddings) ---
 FROM runtime AS gateway
 EXPOSE 8080
 CMD ["uvicorn", "orchestrator.gateway:app", "--host", "0.0.0.0", "--port", "8080"]
 
-# --- Validator ---
-FROM runtime AS validator
+# --- Validator (no ML needed) ---
+FROM runtime-light AS validator
 EXPOSE 8091
 CMD ["python", "-m", "subnet.validator"]
 
-# --- Domain Miner ---
+# --- Domain Miner (needs ML for corpus embedding) ---
 FROM runtime AS domain-miner
 EXPOSE 8091
 CMD ["python", "-m", "domain.miner"]
 
-# --- Narrative Miner ---
-FROM runtime AS narrative-miner
+# --- Narrative Miner (no ML — uses OpenRouter API) ---
+FROM runtime-light AS narrative-miner
 EXPOSE 8093
 CMD ["python", "-m", "domain.narrative.miner"]
