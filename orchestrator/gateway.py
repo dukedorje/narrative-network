@@ -9,6 +9,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+# Load .env before any os.environ reads (OPENROUTER_API_KEY, AXON_* config, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import bittensor as bt
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect

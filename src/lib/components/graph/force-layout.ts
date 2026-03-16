@@ -56,12 +56,12 @@ export interface ForceLayoutOptions {
 const DEFAULTS: Required<ForceLayoutOptions> = {
 	linkDistance: 5,
 	linkStrength: 0.3,
-	chargeStrength: -15,
+	chargeStrength: -12,
 	chargeDistanceMax: 30,
 	centerStrength: 0.012,
 	collisionPadding: 0.4,
-	damping: 0.86,
-	energyMin: 0.002,
+	damping: 0.75,
+	energyMin: 0.01,
 	theta: 0.8
 };
 
@@ -351,21 +351,21 @@ export class ForceLayout {
 				const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 				const minDist = a.radius + b.radius + this.opts.collisionPadding;
 				if (dist < minDist && dist > 0.001) {
-					const overlap = (minDist - dist) * 0.3;
+					const overlap = (minDist - dist) * 0.15;
 					const nx = dx / dist;
 					const ny = dy / dist;
 					const nz = dz / dist;
-					// Position correction
+					// Position correction (gentle to avoid energy injection)
 					a.x -= nx * overlap;
 					a.y -= ny * overlap;
 					a.z -= nz * overlap;
 					b.x += nx * overlap;
 					b.y += ny * overlap;
 					b.z += nz * overlap;
-					// Gentle velocity correction — absorb rather than bounce
+					// Absorb approaching velocity along collision axis
 					const relV = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
 					if (relV < 0) {
-						const impulse = relV * 0.15;
+						const impulse = relV * 0.4;
 						a.vx += nx * impulse;
 						a.vy += ny * impulse;
 						a.vz += nz * impulse;

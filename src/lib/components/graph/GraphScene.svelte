@@ -83,15 +83,28 @@
 	let nodePositions = $state<Map<string, { x: number; y: number; z: number }>>(new Map());
 	let hoveredNode = $state<string | null>(null);
 	let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
+	let hoveringCard = false;
 	let settling = $state(true);
 
 	function setHovered(id: string | null) {
 		if (hoverTimeout) clearTimeout(hoverTimeout);
 		if (id) {
 			hoveredNode = id;
-		} else {
-			hoverTimeout = setTimeout(() => (hoveredNode = null), 150);
+		} else if (!hoveringCard) {
+			hoverTimeout = setTimeout(() => {
+				if (!hoveringCard) hoveredNode = null;
+			}, 200);
 		}
+	}
+
+	function onCardEnter() {
+		hoveringCard = true;
+		if (hoverTimeout) clearTimeout(hoverTimeout);
+	}
+
+	function onCardLeave() {
+		hoveringCard = false;
+		setHovered(null);
 	}
 
 	// ─── Rebuild topology when data changes ─────────────────────────────
@@ -310,8 +323,13 @@
 	{@const hPos = nodePositions.get(hoveredNode)}
 	{#if hoveredEntity && hPos}
 		{@const hR = nodeRadius(hoveredEntity.name)}
-		<HTML position={[hPos.x, hPos.y + hR + 1.2, hPos.z]} center pointerEvents="none">
-			<div class="tooltip">
+		<HTML position={[hPos.x, hPos.y + hR + 1.2, hPos.z]} center pointerEvents="auto">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="tooltip"
+				onmouseenter={onCardEnter}
+				onmouseleave={onCardLeave}
+			>
 				<strong>{hoveredEntity.name}</strong>
 				{#if hoveredEntity.summary}
 					<p>
@@ -346,7 +364,6 @@
 		color: #e2e8f0;
 		max-width: 320px;
 		white-space: normal;
-		pointer-events: none;
 		transition: opacity 0.15s;
 	}
 

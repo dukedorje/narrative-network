@@ -49,12 +49,13 @@
 	// --- Force layout ---
 	const layout = new ForceLayout({
 		linkDistance: 5,
-		linkStrength: 0.4,
-		chargeStrength: -15,
+		linkStrength: 0.3,
+		chargeStrength: -12,
 		chargeDistanceMax: 30,
-		centerStrength: 0.015,
+		centerStrength: 0.012,
 		collisionPadding: 0.4,
-		damping: 0.88,
+		damping: 0.75,
+		energyMin: 0.01,
 		theta: 0.8
 	});
 
@@ -65,12 +66,17 @@
 	// Track previous currentNodeId for localized reheat
 	let prevNodeId: string | null = null;
 
-	// --- Update layout when data changes ---
+	// Track previous graph identity to avoid unnecessary setGraph calls
+	let prevGraphKey = '';
+
+	// --- Update layout when graph structure changes (not on currentNodeId change) ---
 	$effect(() => {
 		const nodeIds = new Set(nodes.map((n) => n.node_id));
+		const graphKey = [...nodeIds].sort().join(',') + '|' + edges.length;
+
 		const nodeData = nodes.map((n) => ({
 			id: n.node_id,
-			radius: n.node_id === currentNodeId ? 0.35 : pathSet.has(n.node_id) ? 0.25 : 0.15
+			radius: 0.2 // uniform radius — visual sizing handled by the mesh
 		}));
 		const linkData = edges
 			.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.dest_id))
@@ -79,15 +85,19 @@
 				target: e.dest_id,
 				weight: e.weight ?? 1
 			}));
-		layout.setGraph(nodeData, linkData);
+
+		if (graphKey !== prevGraphKey) {
+			layout.setGraph(nodeData, linkData);
+			prevGraphKey = graphKey;
+		}
 		layoutLinks = linkData;
 		settling = true;
 	});
 
-	// Localized reheat when navigating to a new node
+	// Gentle reheat when navigating to a new node (no full graph reset)
 	$effect(() => {
 		if (currentNodeId && currentNodeId !== prevNodeId && prevNodeId !== null) {
-			layout.reheatLocal(currentNodeId, 2, 3);
+			layout.reheatLocal(currentNodeId, 2, 0.5);
 		}
 		prevNodeId = currentNodeId;
 	});
