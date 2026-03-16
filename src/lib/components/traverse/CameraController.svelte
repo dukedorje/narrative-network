@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { T, useThrelte } from '@threlte/core';
+	import { T, useTask } from '@threlte/core';
 	import { OrbitControls } from '@threlte/extras';
-	import { createSpring3D, setSpring3DTarget, tickSpring3D, snapSpring3D } from '../graph/spring';
-	import { Vector3 } from 'three';
+	import { createSpring3D, setSpring3DTarget, tickSpring3D } from '../graph/spring';
 
 	interface Props {
 		/** World-space position to focus on. */
@@ -12,8 +11,6 @@
 	}
 
 	let { focusPosition = null, mode = 'overview' }: Props = $props();
-
-	const { renderer } = useThrelte();
 
 	// Camera offset from focus target
 	const OVERVIEW_OFFSET = { x: 0, y: 12, z: 20 };
@@ -31,7 +28,7 @@
 	let lookAtPos = $state({ x: 0, y: 0, z: 0 });
 	let isAnimating = $state(false);
 
-	// OrbitControls ref
+	// OrbitControls ref — updated imperatively only
 	let controls: any = $state(null);
 
 	// When focus changes, update spring targets
@@ -49,18 +46,11 @@
 		isAnimating = true;
 	});
 
-	// Tick springs each frame via requestAnimationFrame
-	let rafId: number | null = null;
-	let lastTime = 0;
+	// Tick springs on Threlte's render loop — no private RAF
+	useTask((delta) => {
+		if (!isAnimating) return;
 
-	function animate(time: number) {
-		if (!isAnimating) {
-			rafId = null;
-			return;
-		}
-
-		const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0.016;
-		lastTime = time;
+		const dt = Math.min(delta, 0.05);
 
 		const camMoving = tickSpring3D(cameraSpring, dt, 0.12, 0.001);
 		const lookMoving = tickSpring3D(lookAtSpring, dt, 0.1, 0.001);
@@ -76,7 +66,7 @@
 			z: lookAtSpring.z.value
 		};
 
-		// Update OrbitControls target to match lookAt
+		// Update OrbitControls target imperatively (single source of truth)
 		if (controls) {
 			controls.target.set(lookAtPos.x, lookAtPos.y, lookAtPos.z);
 			controls.update();
@@ -85,21 +75,6 @@
 		if (!camMoving && !lookMoving) {
 			isAnimating = false;
 		}
-
-		rafId = requestAnimationFrame(animate);
-	}
-
-	$effect(() => {
-		if (isAnimating && rafId === null) {
-			lastTime = 0;
-			rafId = requestAnimationFrame(animate);
-		}
-		return () => {
-			if (rafId !== null) {
-				cancelAnimationFrame(rafId);
-				rafId = null;
-			}
-		};
 	});
 </script>
 
@@ -117,6 +92,5 @@
 		minDistance={3}
 		maxDistance={60}
 		maxPolarAngle={Math.PI * 0.85}
-		target={new Vector3(lookAtPos.x, lookAtPos.y, lookAtPos.z)}
 	/>
 </T.PerspectiveCamera>

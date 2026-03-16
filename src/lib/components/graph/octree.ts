@@ -235,7 +235,7 @@ function _walkForce(
 
 		const dist = Math.sqrt(dist2);
 		// Softened inverse-square: F = strength * m1 * m2 / (dist² + softening)
-		const force = (strength * body.mass * node.body.mass) / (dist2 + 0.1);
+		const force = (strength * body.mass * node.body.mass) / (dist2 + 0.5);
 		acc.fx += (dx / dist) * force;
 		acc.fy += (dy / dist) * force;
 		acc.fz += (dz / dist) * force;
@@ -246,7 +246,7 @@ function _walkForce(
 	if (cellSize * cellSize < theta * theta * dist2) {
 		if (dist2 < 0.01) return;
 		const dist = Math.sqrt(dist2);
-		const force = (strength * body.mass * node.totalMass) / (dist2 + 0.1);
+		const force = (strength * body.mass * node.totalMass) / (dist2 + 0.5);
 		acc.fx += (dx / dist) * force;
 		acc.fy += (dy / dist) * force;
 		acc.fz += (dz / dist) * force;

@@ -3,7 +3,9 @@
  * Replaces the Bonfires.ai external API with the subnet's own knowledge graph.
  */
 
-const GATEWAY_URL = process.env.GATEWAY_URL ?? 'http://localhost:8080';
+import { env } from '$env/dynamic/private';
+
+const GATEWAY_URL = env.GATEWAY_URL ?? 'http://localhost:8080';
 
 export interface GraphEntity {
 	uuid: string;

@@ -1,9 +1,9 @@
 import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 
-const GATEWAY_URL = process.env.GATEWAY_URL ?? 'http://localhost:8080';
-
 export const POST: RequestHandler = async ({ request }) => {
+	const GATEWAY_URL = env.GATEWAY_URL ?? 'http://localhost:8080';
 	const body = await request.json();
 	try {
 		const res = await fetch(`${GATEWAY_URL}/hop`, {

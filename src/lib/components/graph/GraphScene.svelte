@@ -54,45 +54,62 @@
 		return 0.15 + Math.min(name.length * 0.008, 0.2);
 	}
 
-	// --- Force layout ---
+	// ─── Single source of truth for positions ───────────────────────────
+	// Both nodes and edges read from this. Updated once per frame in useTask.
+	// Keyed by node ID → {x, y, z}.
+	let positions = new Map<string, { x: number; y: number; z: number }>();
+
+	// Edge topology: pairs of node IDs. Rebuilt only when graph structure changes.
+	let edgeRefs: Array<{ sourceId: string; targetId: string }> = [];
+
+	// ─── Force layout ───────────────────────────────────────────────────
 	const layout = new ForceLayout({
 		linkDistance: 4,
-		linkStrength: 0.6,
-		chargeStrength: -8,
-		chargeDistanceMax: 20,
+		linkStrength: 0.4,
+		chargeStrength: -12,
+		chargeDistanceMax: 25,
 		centerStrength: 0.02,
 		collisionPadding: 0.3,
-		damping: 0.85
+		damping: 0.88
 	});
 
-	// Reactive state for rendering — snapshot from layout each frame
+	// Persistent edge geometry — buffer grows as needed, never recreated per frame
+	const edgeGeo = new BufferGeometry();
+	let edgeBuffer = new Float32Array(512);
+	let edgeAttr: Float32BufferAttribute | null = null;
+	let hasEdgeData = $state(false);
+
+	// Svelte-visible position state (triggers template re-render for node meshes)
 	let nodePositions = $state<Map<string, { x: number; y: number; z: number }>>(new Map());
-	let edgeGeometry = $state<BufferGeometry>(new BufferGeometry());
 	let hoveredNode = $state<string | null>(null);
 	let settling = $state(true);
 
-	// --- Update layout when data changes ---
+	// ─── Rebuild topology when data changes ─────────────────────────────
 	$effect(() => {
 		const nodeData = entities.map((e) => ({
 			id: e.uuid,
 			radius: nodeRadius(e.name)
 		}));
-		const linkData = edges
-			.filter((e) => {
-				const ids = new Set(entities.map((n) => n.uuid));
-				return ids.has(e.source_node_uuid) && ids.has(e.target_node_uuid);
-			})
-			.map((e) => ({
-				source: e.source_node_uuid,
-				target: e.target_node_uuid
-			}));
+		const nodeIds = new Set(entities.map((n) => n.uuid));
+
+		// Edge refs: just pairs of IDs. This is the structural definition.
+		edgeRefs = edges
+			.filter((e) => nodeIds.has(e.source_node_uuid) && nodeIds.has(e.target_node_uuid))
+			.map((e) => ({ sourceId: e.source_node_uuid, targetId: e.target_node_uuid }));
+
+		const linkData = edgeRefs.map((e) => ({
+			source: e.sourceId,
+			target: e.targetId,
+			weight: 1
+		}));
+
 		layout.setGraph(nodeData, linkData);
 		settling = true;
 	});
 
-	// --- Animation loop: tick the simulation ---
-	useTask((delta) => {
-		// Run multiple ticks per frame for faster convergence
+	// ─── Frame loop ─────────────────────────────────────────────────────
+	// Single place where ALL position data is read and written.
+	useTask(() => {
 		const ticks = settling ? 3 : 1;
 		let active = false;
 		for (let i = 0; i < ticks; i++) {
@@ -100,37 +117,54 @@
 		}
 		settling = active;
 
-		// Snapshot positions (skip NaN nodes)
-		const positions = new Map<string, { x: number; y: number; z: number }>();
+		// Step 1: Read positions from layout into our single source of truth.
+		positions = new Map();
 		for (const [id, node] of layout.nodes) {
 			if (isFinite(node.x) && isFinite(node.y) && isFinite(node.z)) {
 				positions.set(id, { x: node.x, y: node.y, z: node.z });
 			}
 		}
-		nodePositions = positions;
 
-		// Update edge geometry
-		updateEdgeGeometry();
+		// Step 2: Write edge geometry by looking up BOTH endpoints from `positions`.
+		// An edge line endpoint IS the position of the referenced node — same object.
+		let idx = 0;
+		for (const edge of edgeRefs) {
+			const a = positions.get(edge.sourceId);
+			const b = positions.get(edge.targetId);
+			if (!a || !b) continue; // skip if either node has no valid position
+
+			const needed = idx + 6;
+			if (edgeBuffer.length < needed) {
+				const bigger = new Float32Array(Math.max(needed * 2, 512));
+				bigger.set(edgeBuffer);
+				edgeBuffer = bigger;
+				edgeAttr = null; // force re-creation with new backing array
+			}
+
+			edgeBuffer[idx] = a.x;
+			edgeBuffer[idx + 1] = a.y;
+			edgeBuffer[idx + 2] = a.z;
+			edgeBuffer[idx + 3] = b.x;
+			edgeBuffer[idx + 4] = b.y;
+			edgeBuffer[idx + 5] = b.z;
+			idx += 6;
+		}
+
+		if (idx > 0) {
+			// Create attribute from exact slice so bounding sphere doesn't see NaN/zero padding
+			edgeAttr = new Float32BufferAttribute(edgeBuffer.slice(0, idx), 3);
+			edgeGeo.setAttribute('position', edgeAttr);
+			hasEdgeData = true;
+		} else {
+			hasEdgeData = false;
+		}
+
+		// Step 3: Publish positions to Svelte state so node meshes update.
+		// This MUST happen AFTER edge geometry is written, so both use the same data.
+		nodePositions = positions;
 	});
 
-	function updateEdgeGeometry() {
-		const points: number[] = [];
-		for (const link of layout.links) {
-			const a = layout.nodes.get(link.source);
-			const b = layout.nodes.get(link.target);
-			if (!a || !b) continue;
-			if (!isFinite(a.x) || !isFinite(a.y) || !isFinite(a.z)) continue;
-			if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.z)) continue;
-			points.push(a.x, a.y, a.z, b.x, b.y, b.z);
-		}
-		const geo = new BufferGeometry();
-		if (points.length > 0) {
-			geo.setAttribute('position', new Float32BufferAttribute(points, 3));
-		}
-		edgeGeometry = geo;
-	}
-
-	// --- Drag interaction ---
+	// ─── Drag interaction ───────────────────────────────────────────────
 	const { camera, renderer } = useThrelte();
 	let dragId = $state<string | null>(null);
 	const dragPlane = new Plane();
@@ -139,16 +173,15 @@
 	const intersection = new Vector3();
 
 	function handlePointerDown(entity: Entity, event: { nativeEvent: PointerEvent }) {
-		const pos = nodePositions.get(entity.uuid);
+		const pos = positions.get(entity.uuid);
 		if (!pos) return;
-		// Set drag plane perpendicular to camera, passing through node
 		const nodePos = new Vector3(pos.x, pos.y, pos.z);
 		const camDir = new Vector3();
 		camera.current.getWorldDirection(camDir);
 		dragPlane.setFromNormalAndCoplanarPoint(camDir, nodePos);
 		dragId = entity.uuid;
 		layout.pin(entity.uuid, pos.x, pos.y, pos.z);
-		layout.reheat(0.3);
+		layout.reheat(1);
 	}
 
 	function handlePointerMove(event: PointerEvent) {
@@ -165,12 +198,11 @@
 	function handlePointerUp() {
 		if (dragId) {
 			layout.unpin(dragId);
-			layout.reheat(0.3);
+			layout.reheat(1);
 			dragId = null;
 		}
 	}
 
-	// Attach window-level listeners for drag continuation outside mesh
 	$effect(() => {
 		if (typeof window === 'undefined') return;
 		window.addEventListener('pointermove', handlePointerMove);
@@ -182,7 +214,6 @@
 	});
 
 	function handleNodeClick(entity: Entity) {
-		// Only fire click if we weren't dragging
 		if (dragId) return;
 		onNodeClick?.(entity.uuid, entity.name);
 	}
@@ -204,19 +235,19 @@
 	/>
 </T.PerspectiveCamera>
 
-<!-- Ambient + directional light -->
+<!-- Lighting -->
 <T.AmbientLight intensity={0.4} />
 <T.DirectionalLight position={[10, 15, 10]} intensity={0.8} />
 <T.DirectionalLight position={[-5, -5, -10]} intensity={0.2} />
 
-<!-- Edge lines -->
-{#if edgeGeometry.attributes.position}
-	<T.LineSegments geometry={edgeGeometry}>
+<!-- Edge lines — geometry is written from the same `positions` map as nodes -->
+{#if hasEdgeData}
+	<T.LineSegments geometry={edgeGeo}>
 		<T.LineBasicMaterial color="#475569" opacity={0.4} transparent />
 	</T.LineSegments>
 {/if}
 
-<!-- Nodes -->
+<!-- Nodes — position read from `nodePositions` (same data as edge endpoints) -->
 {#each entities as entity (entity.uuid)}
 	{@const pos = nodePositions.get(entity.uuid)}
 	{@const r = nodeRadius(entity.name)}
@@ -225,6 +256,7 @@
 	{#if pos}
 		<T.Mesh
 			position={[pos.x, pos.y, pos.z]}
+			scale={isHovered ? 1.2 : 1}
 			onclick={() => handleNodeClick(entity)}
 			onpointerdown={(e: { nativeEvent: PointerEvent }) => handlePointerDown(entity, e)}
 			onpointerenter={() => (hoveredNode = entity.uuid)}
@@ -232,7 +264,7 @@
 				if (hoveredNode === entity.uuid) hoveredNode = null;
 			}}
 		>
-			<T.SphereGeometry args={[isHovered ? r * 1.2 : r, 16, 12]} />
+			<T.SphereGeometry args={[r, 16, 12]} />
 			<T.MeshStandardMaterial
 				color={color}
 				emissive={color}
@@ -244,16 +276,14 @@
 			/>
 		</T.Mesh>
 
-		<!-- Label -->
 		{#if entity.name.length <= 30}
 			<HTML position={[pos.x, pos.y - r - 0.4, pos.z]} center pointerEvents="none">
 				<span class="node-label">{truncateLabel(entity.name)}</span>
 			</HTML>
 		{/if}
 
-		<!-- Hover tooltip -->
 		{#if isHovered}
-			<HTML position={[pos.x, pos.y + r + 0.6, pos.z]} center pointerEvents="none">
+			<HTML position={[pos.x, pos.y + r + 1.2, pos.z]} center pointerEvents="none">
 				<div class="tooltip">
 					<strong>{entity.name}</strong>
 					{#if entity.summary}

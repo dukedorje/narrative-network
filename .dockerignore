@@ -21,6 +21,7 @@ e2e
 tests
 docs
 !docs/corpora
+docs/corpora/.cache
 *.md
 !README.md
 

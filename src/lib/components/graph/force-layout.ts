@@ -17,10 +17,14 @@ export interface LayoutNode {
 	vx: number;
 	vy: number;
 	vz: number;
-	// Previous-tick acceleration (for Verlet)
+	// Current acceleration
 	ax: number;
 	ay: number;
 	az: number;
+	// Previous-tick acceleration (for full Verlet velocity update)
+	axPrev: number;
+	ayPrev: number;
+	azPrev: number;
 	fx: number | null; // pinned position (null = unpinned)
 	fy: number | null;
 	fz: number | null;
@@ -102,10 +106,10 @@ export class ForceLayout {
 				existing.degree = degree;
 				this.nodes.set(d.id, existing);
 			} else {
-				// Golden-angle spiral placement in 3D
+				// Golden-angle spiral placement in 3D — wide spread to reduce initial forces
 				const angle = i * 2.399963; // golden angle in radians
-				const r = 2 + i * 0.4;
-				const layer = ((i % 3) - 1) * 2;
+				const r = 3 + i * 0.6;
+				const layer = ((i % 3) - 1) * 2.5;
 				this.nodes.set(d.id, {
 					id: d.id,
 					x: r * Math.cos(angle),
@@ -117,6 +121,9 @@ export class ForceLayout {
 					ax: 0,
 					ay: 0,
 					az: 0,
+					axPrev: 0,
+					ayPrev: 0,
+					azPrev: 0,
 					fx: null,
 					fy: null,
 					fz: null,
@@ -134,7 +141,13 @@ export class ForceLayout {
 		}));
 
 		this.adjacency = tempAdj;
-		this.energy = Infinity; // reheat
+		this.energy = Infinity;
+
+		// Warm start: run simulation silently to skip the chaotic initial phase.
+		// Nodes converge to a rough layout before the first render frame.
+		for (let i = 0; i < 60; i++) {
+			if (!this.tick()) break;
+		}
 	}
 
 	/** Advance one tick using velocity Verlet. Returns true if still settling. */
@@ -143,7 +156,10 @@ export class ForceLayout {
 
 		const nodes = Array.from(this.nodes.values());
 		const n = nodes.length;
-		if (n === 0) return false;
+		if (n === 0) {
+			this.energy = 0;
+			return false;
+		}
 
 		// --- Half-step position update (Verlet part 1) ---
 		const dt = 1;
@@ -155,8 +171,11 @@ export class ForceLayout {
 		}
 
 		// --- Compute forces ---
-		// Zero out accelerations
+		// Store previous accelerations for full Verlet velocity update
 		for (const node of nodes) {
+			node.axPrev = node.ax;
+			node.ayPrev = node.ay;
+			node.azPrev = node.az;
 			node.ax = 0;
 			node.ay = 0;
 			node.az = 0;
@@ -199,21 +218,26 @@ export class ForceLayout {
 			}
 
 			if (node.fx === null && node.fy === null && node.fz === null) {
-				// Verlet velocity update
-				node.vx += 0.5 * node.ax * dt;
-				node.vy += 0.5 * node.ay * dt;
-				node.vz += 0.5 * node.az * dt;
+				// Full velocity Verlet: v += 0.5 * (a_prev + a_new) * dt
+				node.vx += 0.5 * (node.axPrev + node.ax) * dt;
+				node.vy += 0.5 * (node.ayPrev + node.ay) * dt;
+				node.vz += 0.5 * (node.azPrev + node.az) * dt;
 
-				// Velocity clamping
-				const maxV = 8;
+				// Adaptive velocity cap: tighter when energy is high to prevent wild motion
+				// Smoothly ramps from 2 (high energy) to 6 (settled)
+				const energyClamped = Math.min(this.energy, 20);
+				const maxV = 2 + 4 * (1 - energyClamped / 20);
 				node.vx = Math.max(-maxV, Math.min(maxV, node.vx));
 				node.vy = Math.max(-maxV, Math.min(maxV, node.vy));
 				node.vz = Math.max(-maxV, Math.min(maxV, node.vz));
 
-				// Damping
-				node.vx *= this.opts.damping;
-				node.vy *= this.opts.damping;
-				node.vz *= this.opts.damping;
+				// Adaptive damping: high damping when chaotic, easing off as it settles.
+				// Gives a critically-damped feel — fast approach, smooth stop.
+				// Floor at 0.75 ensures oscillations always decay quickly.
+				const damping = this.opts.damping - 0.12 * (energyClamped / 20);
+				node.vx *= damping;
+				node.vy *= damping;
+				node.vz *= damping;
 			}
 
 			// Kinetic energy (per node, mass-weighted)
@@ -351,32 +375,20 @@ export class ForceLayout {
 		}
 	}
 
-	/** Reheat simulation (e.g. after dragging or graph change). */
-	reheat(energy = 5) {
+	/** Reheat simulation (e.g. after dragging or graph change).
+	 *  Only raises the energy threshold so the simulation keeps ticking.
+	 *  Does NOT inject random velocity — forces handle repositioning. */
+	reheat(energy = 2) {
 		this.energy = Math.max(this.energy, energy);
-		// Give all nodes a small velocity kick proportional to reheat
-		for (const node of this.nodes.values()) {
-			node.vx += (Math.random() - 0.5) * energy * 0.3;
-			node.vy += (Math.random() - 0.5) * energy * 0.3;
-			node.vz += (Math.random() - 0.5) * energy * 0.3;
-		}
 	}
 
 	/**
 	 * Localized reheat — only disturbs nodes within `hops` of `centerId`.
 	 * Used when a hop adds/changes nodes to avoid exploding the whole graph.
 	 */
-	reheatLocal(centerId: string, hops = 2, energy = 3) {
+	reheatLocal(centerId: string, hops = 2, energy = 2) {
 		this.energy = Math.max(this.energy, energy);
-		const affected = this._bfsNeighbors(centerId, hops);
-		for (const id of affected) {
-			const node = this.nodes.get(id);
-			if (node) {
-				node.vx += (Math.random() - 0.5) * energy * 0.5;
-				node.vy += (Math.random() - 0.5) * energy * 0.5;
-				node.vz += (Math.random() - 0.5) * energy * 0.5;
-			}
-		}
+		// No velocity kicks — forces handle repositioning naturally
 	}
 
 	private _bfsNeighbors(startId: string, maxHops: number): Set<string> {

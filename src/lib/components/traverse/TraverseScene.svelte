@@ -1,17 +1,31 @@
 <script lang="ts">
 	import { T, useTask } from '@threlte/core';
-	import { OrbitControls, HTML, interactivity } from '@threlte/extras';
-	import { BufferGeometry, Float32BufferAttribute, Color } from 'three';
+	import { interactivity } from '@threlte/extras';
 	import { ForceLayout } from '../graph/force-layout';
+	import CameraController from './CameraController.svelte';
+	import NodeInstances from './NodeInstances.svelte';
+	import EdgeLines from './EdgeLines.svelte';
 
 	interface Props {
 		nodes: Array<{ node_id: string; has_corpus: boolean; neighbours: string[] }>;
-		edges: Array<{ source_id: string; dest_id: string; weight: number; traversal_count: number }>;
+		edges: Array<{
+			source_id: string;
+			dest_id: string;
+			weight: number;
+			traversal_count: number;
+		}>;
 		playerPath: string[];
 		currentNodeId: string | null;
+		onNodeClick?: (nodeId: string) => void;
 	}
 
-	let { nodes: rawNodes = [], edges: rawEdges = [], playerPath = [], currentNodeId = null }: Props = $props();
+	let {
+		nodes: rawNodes = [],
+		edges: rawEdges = [],
+		playerPath = [],
+		currentNodeId = null,
+		onNodeClick
+	}: Props = $props();
 
 	// Ensure arrays even if gateway returns wrapped objects
 	let nodes = $derived(Array.isArray(rawNodes) ? rawNodes : []);
@@ -32,61 +46,59 @@
 		})()
 	);
 
-	function isPathEdge(sourceId: string, destId: string): boolean {
-		return pathEdgeSet.has(`${sourceId}__${destId}`);
-	}
-
-	// --- Node appearance ---
-	function nodeRadius(nodeId: string): number {
-		if (nodeId === currentNodeId) return 0.35;
-		if (pathSet.has(nodeId)) return 0.25;
-		return 0.15;
-	}
-
-	function nodeColor(nodeId: string, hasCorpus: boolean): string {
-		if (nodeId === currentNodeId) return '#6ee7b7';
-		if (pathSet.has(nodeId)) return '#34d399';
-		return hasCorpus ? '#93c5fd' : '#475569';
-	}
-
-	function nodeEmissive(nodeId: string): number {
-		if (nodeId === currentNodeId) return 0.8;
-		if (pathSet.has(nodeId)) return 0.5;
-		return 0.1;
-	}
-
 	// --- Force layout ---
 	const layout = new ForceLayout({
 		linkDistance: 5,
-		linkStrength: 0.5,
-		chargeStrength: -12,
-		chargeDistanceMax: 25,
-		centerStrength: 0.02,
+		linkStrength: 0.4,
+		chargeStrength: -15,
+		chargeDistanceMax: 30,
+		centerStrength: 0.015,
 		collisionPadding: 0.4,
-		damping: 0.85
+		damping: 0.88,
+		theta: 0.8
 	});
 
 	let nodePositions = $state<Map<string, { x: number; y: number; z: number }>>(new Map());
-	let edgeGeo = $state<BufferGeometry>(new BufferGeometry());
-	let pathEdgeGeo = $state<BufferGeometry>(new BufferGeometry());
+	let layoutLinks = $state<Array<{ source: string; target: string }>>([]);
 	let settling = $state(true);
+
+	// Track previous currentNodeId for localized reheat
+	let prevNodeId: string | null = null;
 
 	// --- Update layout when data changes ---
 	$effect(() => {
+		const nodeIds = new Set(nodes.map((n) => n.node_id));
 		const nodeData = nodes.map((n) => ({
 			id: n.node_id,
-			radius: nodeRadius(n.node_id)
+			radius: n.node_id === currentNodeId ? 0.35 : pathSet.has(n.node_id) ? 0.25 : 0.15
 		}));
-		const nodeIds = new Set(nodes.map((n) => n.node_id));
 		const linkData = edges
 			.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.dest_id))
 			.map((e) => ({
 				source: e.source_id,
-				target: e.dest_id
+				target: e.dest_id,
+				weight: e.weight ?? 1
 			}));
 		layout.setGraph(nodeData, linkData);
+		layoutLinks = linkData;
 		settling = true;
 	});
+
+	// Localized reheat when navigating to a new node
+	$effect(() => {
+		if (currentNodeId && currentNodeId !== prevNodeId && prevNodeId !== null) {
+			layout.reheatLocal(currentNodeId, 2, 3);
+		}
+		prevNodeId = currentNodeId;
+	});
+
+	// --- Camera focus position ---
+	let focusPosition = $derived.by(() => {
+		if (!currentNodeId) return null;
+		const pos = nodePositions.get(currentNodeId);
+		return pos ?? null;
+	});
+	let cameraMode = $derived<'overview' | 'focus'>(currentNodeId ? 'focus' : 'overview');
 
 	// --- Animation loop ---
 	useTask(() => {
@@ -105,113 +117,19 @@
 			}
 		}
 		nodePositions = positions;
-
-		// Edge geometries — split into regular and path edges
-		const regularPts: number[] = [];
-		const pathPts: number[] = [];
-		for (const link of layout.links) {
-			const a = layout.nodes.get(link.source);
-			const b = layout.nodes.get(link.target);
-			if (!a || !b) continue;
-			if (!isFinite(a.x) || !isFinite(a.y) || !isFinite(a.z)) continue;
-			if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.z)) continue;
-			const arr = isPathEdge(link.source, link.target) ? pathPts : regularPts;
-			arr.push(a.x, a.y, a.z, b.x, b.y, b.z);
-		}
-
-		const rGeo = new BufferGeometry();
-		if (regularPts.length > 0) {
-			rGeo.setAttribute('position', new Float32BufferAttribute(regularPts, 3));
-		}
-		edgeGeo = rGeo;
-
-		const pGeo = new BufferGeometry();
-		if (pathPts.length > 0) {
-			pGeo.setAttribute('position', new Float32BufferAttribute(pathPts, 3));
-		}
-		pathEdgeGeo = pGeo;
 	});
 </script>
 
-<!-- Camera -->
-<T.PerspectiveCamera makeDefault position={[0, 10, 18]} fov={55}>
-	<OrbitControls
-		enableDamping
-		dampingFactor={0.12}
-		minDistance={3}
-		maxDistance={50}
-		maxPolarAngle={Math.PI * 0.85}
-	/>
-</T.PerspectiveCamera>
+<!-- Camera with spring-based fly-to -->
+<CameraController {focusPosition} mode={cameraMode} />
 
 <!-- Lighting -->
-<T.AmbientLight intensity={0.35} />
+<T.AmbientLight intensity={0.4} />
 <T.DirectionalLight position={[8, 12, 8]} intensity={0.7} />
-<T.DirectionalLight position={[-5, -3, -8]} intensity={0.15} />
+<T.DirectionalLight position={[-5, -3, -8]} intensity={0.2} color="#93c5fd" />
 
-<!-- Regular edges -->
-{#if edgeGeo.attributes.position}
-	<T.LineSegments geometry={edgeGeo}>
-		<T.LineBasicMaterial color="#1e293b" opacity={0.5} transparent />
-	</T.LineSegments>
-{/if}
+<!-- Edges -->
+<EdgeLines positions={nodePositions} links={layoutLinks} {pathEdgeSet} />
 
-<!-- Path edges (glowing) -->
-{#if pathEdgeGeo.attributes.position}
-	<T.LineSegments geometry={pathEdgeGeo}>
-		<T.LineBasicMaterial color="#6ee7b7" opacity={0.9} transparent linewidth={2} />
-	</T.LineSegments>
-{/if}
-
-<!-- Nodes -->
-{#each nodes as node (node.node_id)}
-	{@const pos = nodePositions.get(node.node_id)}
-	{@const r = nodeRadius(node.node_id)}
-	{@const color = nodeColor(node.node_id, node.has_corpus)}
-	{@const emissive = nodeEmissive(node.node_id)}
-	{#if pos}
-		<T.Mesh position={[pos.x, pos.y, pos.z]}>
-			<T.SphereGeometry args={[r, 16, 12]} />
-			<T.MeshStandardMaterial
-				{color}
-				emissive={color}
-				emissiveIntensity={emissive}
-				roughness={0.3}
-				metalness={0.1}
-				transparent
-				opacity={node.node_id === currentNodeId || pathSet.has(node.node_id) ? 1.0 : 0.5}
-			/>
-		</T.Mesh>
-
-		<!-- Label -->
-		<HTML position={[pos.x, pos.y - r - 0.35, pos.z]} center pointerEvents="none">
-			<span
-				class="node-label"
-				class:current={node.node_id === currentNodeId}
-				class:path={pathSet.has(node.node_id)}
-			>
-				{node.node_id}
-			</span>
-		</HTML>
-	{/if}
-{/each}
-
-<style>
-	.node-label {
-		font-size: 10px;
-		color: #64748b;
-		white-space: nowrap;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-		user-select: none;
-	}
-
-	.node-label.current {
-		color: #6ee7b7;
-		font-weight: 700;
-		font-size: 11px;
-	}
-
-	.node-label.path {
-		color: #a7f3d0;
-	}
-</style>
+<!-- Nodes (instanced) -->
+<NodeInstances {nodes} positions={nodePositions} {currentNodeId} {pathSet} {onNodeClick} />

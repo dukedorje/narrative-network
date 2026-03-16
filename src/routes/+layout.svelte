@@ -18,9 +18,12 @@
 			<span class="logo-text">Narrative Network</span>
 		</a>
 		<nav>
-			<a href="/" class:active={page.url.pathname === '/'}>Explorer</a>
-			<a href="/traverse" class="traverse-link" class:active={page.url.pathname === '/traverse'}>
-				<span class="traverse-icon">&#x25C8;</span>
+			<a href="/" class="nav-link" class:active={page.url.pathname === '/'}>
+				<span class="nav-icon">&#x25C7;</span>
+				Explorer
+			</a>
+			<a href="/traverse" class="nav-link" class:active={page.url.pathname === '/traverse'}>
+				<span class="nav-icon">&#x25C8;</span>
 				Traverse
 			</a>
 		</nav>
@@ -73,41 +76,32 @@
 		gap: 16px;
 	}
 
-	nav a {
-		color: #94a3b8;
-		text-decoration: none;
-		font-size: 14px;
-	}
-
-	nav a:hover {
-		color: #e2e8f0;
-	}
-
-	nav a.active {
-		color: #6ee7b7;
-	}
-
-	.traverse-link {
+	.nav-link {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 6px 16px;
 		border: 1px solid #334155;
 		border-radius: 8px;
+		color: #94a3b8;
+		text-decoration: none;
+		font-size: 14px;
 		transition: all 0.18s;
 	}
 
-	.traverse-link:hover {
+	.nav-link:hover {
+		color: #e2e8f0;
 		border-color: #6ee7b7;
 		background: rgba(110, 231, 183, 0.06);
 	}
 
-	.traverse-link.active {
+	.nav-link.active {
+		color: #6ee7b7;
 		border-color: #6ee7b7;
 		background: rgba(110, 231, 183, 0.1);
 	}
 
-	.traverse-icon {
+	.nav-icon {
 		font-size: 14px;
 		color: #6ee7b7;
 	}

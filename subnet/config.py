@@ -70,10 +70,10 @@ EMBEDDING_BATCH_SIZE: int = int(_env("EMBEDDING_BATCH_SIZE", 32))
 # Narrative miner (OpenRouter)
 # ---------------------------------------------------------------------------
 OPENROUTER_BASE_URL: str = str(_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
-OPENROUTER_MODEL: str = str(_env("OPENROUTER_MODEL", "openrouter/auto"))
+OPENROUTER_MODEL: str = str(_env("OPENROUTER_MODEL", "anthropic/claude-3.5-haiku"))
 
 NARRATIVE_MODEL: str = str(_env("NARRATIVE_MODEL", OPENROUTER_MODEL))
-NARRATIVE_MAX_TOKENS: int = int(_env("NARRATIVE_MAX_TOKENS", 400))
+NARRATIVE_MAX_TOKENS: int = int(_env("NARRATIVE_MAX_TOKENS", 1024))
 NARRATIVE_TEMPERATURE: float = float(_env("NARRATIVE_TEMPERATURE", 0.75))
 
 # ---------------------------------------------------------------------------
