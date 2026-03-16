@@ -82,7 +82,17 @@
 	// Svelte-visible position state (triggers template re-render for node meshes)
 	let nodePositions = $state<Map<string, { x: number; y: number; z: number }>>(new Map());
 	let hoveredNode = $state<string | null>(null);
+	let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
 	let settling = $state(true);
+
+	function setHovered(id: string | null) {
+		if (hoverTimeout) clearTimeout(hoverTimeout);
+		if (id) {
+			hoveredNode = id;
+		} else {
+			hoverTimeout = setTimeout(() => (hoveredNode = null), 150);
+		}
+	}
 
 	// ─── Rebuild topology when data changes ─────────────────────────────
 	$effect(() => {
@@ -171,6 +181,9 @@
 	const raycaster = new Raycaster();
 	const pointer = new Vector2();
 	const intersection = new Vector3();
+	// Track drag velocity for momentum on release
+	let prevDragPos = { x: 0, y: 0, z: 0 };
+	let dragVelocity = { x: 0, y: 0, z: 0 };
 
 	function handlePointerDown(entity: Entity, event: { nativeEvent: PointerEvent }) {
 		const pos = positions.get(entity.uuid);
@@ -180,8 +193,10 @@
 		camera.current.getWorldDirection(camDir);
 		dragPlane.setFromNormalAndCoplanarPoint(camDir, nodePos);
 		dragId = entity.uuid;
+		prevDragPos = { x: pos.x, y: pos.y, z: pos.z };
+		dragVelocity = { x: 0, y: 0, z: 0 };
 		layout.pin(entity.uuid, pos.x, pos.y, pos.z);
-		layout.reheat(1);
+		layout.reheat(2);
 	}
 
 	function handlePointerMove(event: PointerEvent) {
@@ -191,14 +206,21 @@
 		pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 		raycaster.setFromCamera(pointer, camera.current);
 		if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
+			// Smooth velocity tracking with exponential moving average
+			const smooth = 0.3;
+			dragVelocity.x = smooth * (intersection.x - prevDragPos.x) + (1 - smooth) * dragVelocity.x;
+			dragVelocity.y = smooth * (intersection.y - prevDragPos.y) + (1 - smooth) * dragVelocity.y;
+			dragVelocity.z = smooth * (intersection.z - prevDragPos.z) + (1 - smooth) * dragVelocity.z;
+			prevDragPos = { x: intersection.x, y: intersection.y, z: intersection.z };
 			layout.pin(dragId, intersection.x, intersection.y, intersection.z);
 		}
 	}
 
 	function handlePointerUp() {
 		if (dragId) {
-			layout.unpin(dragId);
-			layout.reheat(1);
+			// Transfer drag momentum to the node for natural release
+			layout.releaseWithVelocity(dragId, dragVelocity.x, dragVelocity.y, dragVelocity.z);
+			layout.reheat(3);
 			dragId = null;
 		}
 	}
@@ -259,10 +281,8 @@
 			scale={isHovered ? 1.2 : 1}
 			onclick={() => handleNodeClick(entity)}
 			onpointerdown={(e: { nativeEvent: PointerEvent }) => handlePointerDown(entity, e)}
-			onpointerenter={() => (hoveredNode = entity.uuid)}
-			onpointerleave={() => {
-				if (hoveredNode === entity.uuid) hoveredNode = null;
-			}}
+			onpointerenter={() => setHovered(entity.uuid)}
+			onpointerleave={() => setHovered(null)}
 		>
 			<T.SphereGeometry args={[r, 16, 12]} />
 			<T.MeshStandardMaterial
@@ -281,22 +301,32 @@
 				<span class="node-label">{truncateLabel(entity.name)}</span>
 			</HTML>
 		{/if}
-
-		{#if isHovered}
-			<HTML position={[pos.x, pos.y + r + 1.2, pos.z]} center pointerEvents="none">
-				<div class="tooltip">
-					<strong>{entity.name}</strong>
-					{#if entity.summary}
-						<p>{entity.summary.slice(0, 200)}{entity.summary.length > 200 ? '...' : ''}</p>
-					{/if}
-					{#if entity.labels?.length}
-						<span class="labels">{entity.labels.join(', ')}</span>
-					{/if}
-				</div>
-			</HTML>
-		{/if}
 	{/if}
 {/each}
+
+<!-- Single hover tooltip — rendered once, only when a node is hovered -->
+{#if hoveredNode}
+	{@const hoveredEntity = entities.find((e) => e.uuid === hoveredNode)}
+	{@const hPos = nodePositions.get(hoveredNode)}
+	{#if hoveredEntity && hPos}
+		{@const hR = nodeRadius(hoveredEntity.name)}
+		<HTML position={[hPos.x, hPos.y + hR + 1.2, hPos.z]} center pointerEvents="none">
+			<div class="tooltip">
+				<strong>{hoveredEntity.name}</strong>
+				{#if hoveredEntity.summary}
+					<p>
+						{hoveredEntity.summary.slice(0, 200)}{hoveredEntity.summary.length > 200
+							? '...'
+							: ''}
+					</p>
+				{/if}
+				{#if hoveredEntity.labels?.length}
+					<span class="labels">{hoveredEntity.labels.join(', ')}</span>
+				{/if}
+			</div>
+		</HTML>
+	{/if}
+{/if}
 
 <style>
 	.node-label {
@@ -317,6 +347,7 @@
 		max-width: 320px;
 		white-space: normal;
 		pointer-events: none;
+		transition: opacity 0.15s;
 	}
 
 	.tooltip p {

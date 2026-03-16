@@ -55,13 +55,13 @@ export interface ForceLayoutOptions {
 
 const DEFAULTS: Required<ForceLayoutOptions> = {
 	linkDistance: 5,
-	linkStrength: 0.4,
+	linkStrength: 0.3,
 	chargeStrength: -15,
 	chargeDistanceMax: 30,
-	centerStrength: 0.015,
+	centerStrength: 0.012,
 	collisionPadding: 0.4,
-	damping: 0.88,
-	energyMin: 0.001,
+	damping: 0.86,
+	energyMin: 0.002,
 	theta: 0.8
 };
 
@@ -223,21 +223,24 @@ export class ForceLayout {
 				node.vy += 0.5 * (node.ayPrev + node.ay) * dt;
 				node.vz += 0.5 * (node.azPrev + node.az) * dt;
 
-				// Adaptive velocity cap: tighter when energy is high to prevent wild motion
-				// Smoothly ramps from 2 (high energy) to 6 (settled)
-				const energyClamped = Math.min(this.energy, 20);
-				const maxV = 2 + 4 * (1 - energyClamped / 20);
-				node.vx = Math.max(-maxV, Math.min(maxV, node.vx));
-				node.vy = Math.max(-maxV, Math.min(maxV, node.vy));
-				node.vz = Math.max(-maxV, Math.min(maxV, node.vz));
+				// Smooth velocity limiting — tanh-style soft clamp.
+				// Approaches maxV asymptotically instead of hard clamping.
+				const maxV = 4;
+				const speed = Math.sqrt(
+					node.vx * node.vx + node.vy * node.vy + node.vz * node.vz
+				);
+				if (speed > 0.001) {
+					const clamped = maxV * Math.tanh(speed / maxV);
+					const scale = clamped / speed;
+					node.vx *= scale;
+					node.vy *= scale;
+					node.vz *= scale;
+				}
 
-				// Adaptive damping: high damping when chaotic, easing off as it settles.
-				// Gives a critically-damped feel — fast approach, smooth stop.
-				// Floor at 0.75 ensures oscillations always decay quickly.
-				const damping = this.opts.damping - 0.12 * (energyClamped / 20);
-				node.vx *= damping;
-				node.vy *= damping;
-				node.vz *= damping;
+				// Smooth damping — constant rate gives natural deceleration
+				node.vx *= this.opts.damping;
+				node.vy *= this.opts.damping;
+				node.vz *= this.opts.damping;
 			}
 
 			// Kinetic energy (per node, mass-weighted)
@@ -311,7 +314,7 @@ export class ForceLayout {
 			const ny = dy / dist;
 			const nz = dz / dist;
 			const relVel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
-			const dampingForce = relVel * 0.1; // spring-local damping
+			const dampingForce = relVel * 0.25; // spring-local damping — higher = more elastic feel
 
 			const totalForce = springForce + dampingForce;
 			const forceX = nx * totalForce;
@@ -348,7 +351,7 @@ export class ForceLayout {
 				const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 				const minDist = a.radius + b.radius + this.opts.collisionPadding;
 				if (dist < minDist && dist > 0.001) {
-					const overlap = (minDist - dist) * 0.5;
+					const overlap = (minDist - dist) * 0.3;
 					const nx = dx / dist;
 					const ny = dy / dist;
 					const nz = dz / dist;
@@ -359,10 +362,10 @@ export class ForceLayout {
 					b.x += nx * overlap;
 					b.y += ny * overlap;
 					b.z += nz * overlap;
-					// Velocity bounce (soft)
+					// Gentle velocity correction — absorb rather than bounce
 					const relV = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
 					if (relV < 0) {
-						const impulse = relV * 0.3;
+						const impulse = relV * 0.15;
 						a.vx += nx * impulse;
 						a.vy += ny * impulse;
 						a.vz += nz * impulse;
@@ -428,6 +431,23 @@ export class ForceLayout {
 			node.fx = null;
 			node.fy = null;
 			node.fz = null;
+		}
+	}
+
+	/** Unpin and impart drag momentum for natural release. */
+	releaseWithVelocity(id: string, vx: number, vy: number, vz: number) {
+		const node = this.nodes.get(id);
+		if (node) {
+			node.fx = null;
+			node.fy = null;
+			node.fz = null;
+			// Clamp momentum to avoid wild flings
+			const maxV = 3;
+			const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
+			const scale = speed > maxV ? maxV / speed : 1;
+			node.vx = vx * scale;
+			node.vy = vy * scale;
+			node.vz = vz * scale;
 		}
 	}
 }
