@@ -1,8 +1,7 @@
 """Unit tests for subnet.validator.Validator using mock dependencies."""
 
+import numpy as np
 import pytest
-
-torch = pytest.importorskip("torch", reason="torch required for validator tests")
 
 from subnet.protocol import KnowledgeQuery, NarrativeHop  # noqa: E402
 from subnet.validator import Validator  # noqa: E402
@@ -88,7 +87,7 @@ def test_resync_metagraph_no_change(
 ):
     """Resync with unchanged hotkeys preserves existing scores."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.tensor([0.0, 0.5, 0.3, 0.2])
+    v.scores = np.array([0.0, 0.5, 0.3, 0.2], dtype=np.float32)
     v.resync_metagraph()
     assert float(v.scores[1]) == pytest.approx(0.5)
     assert float(v.scores[2]) == pytest.approx(0.3)
@@ -99,7 +98,7 @@ def test_resync_metagraph_hotkey_swap(
 ):
     """If a hotkey changes, that UID's score is reset to 0."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.tensor([0.0, 0.9, 0.3, 0.1])
+    v.scores = np.array([0.0, 0.9, 0.3, 0.1], dtype=np.float32)
 
     # Swap hotkey at UID 1
     mock_metagraph.hotkeys[1] = "new-miner-hotkey"
@@ -115,7 +114,7 @@ def test_resync_metagraph_growth(
 ):
     """When metagraph grows, score tensor resizes and preserves existing values."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.tensor([0.0, 0.4, 0.3, 0.2])
+    v.scores = np.array([0.0, 0.4, 0.3, 0.2], dtype=np.float32)
 
     # Expand metagraph by one UID
     mock_metagraph.hotkeys.append("new-miner-5-hotkey")
@@ -140,9 +139,9 @@ def test_update_scores_basic(
     from subnet.config import MOVING_AVERAGE_ALPHA
 
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.zeros(4)
+    v.scores = np.zeros(4, dtype=np.float32)
 
-    rewards = torch.tensor([0.8, 0.6])
+    rewards = np.array([0.8, 0.6], dtype=np.float32)
     uids = [1, 2]
     v.update_scores(rewards, uids)
 
@@ -160,12 +159,12 @@ def test_update_scores_nan_handling(
 ):
     """NaN rewards are replaced with 0 before the moving average."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.zeros(4)
+    v.scores = np.zeros(4, dtype=np.float32)
 
-    rewards = torch.tensor([float("nan"), 0.5])
+    rewards = np.array([float("nan"), 0.5], dtype=np.float32)
     v.update_scores(rewards, [1, 2])
 
-    assert not torch.isnan(v.scores).any()
+    assert not np.isnan(v.scores).any()
     assert float(v.scores[1]) == pytest.approx(0.0)
 
 
@@ -174,7 +173,7 @@ def test_set_weights_calls_subtensor(
 ):
     """set_weights records a call on the mock subtensor."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.tensor([0.0, 0.5, 0.3, 0.2])
+    v.scores = np.array([0.0, 0.5, 0.3, 0.2], dtype=np.float32)
     v.set_weights()
 
     assert len(mock_subtensor.set_weights_calls) == 1
@@ -187,7 +186,7 @@ def test_set_weights_normalizes(
 ):
     """Weights passed to subtensor are L1-normalized (sum to 1)."""
     v = _make_validator(mock_wallet, mock_subtensor, mock_dendrite, mock_metagraph, graph_store)
-    v.scores = torch.tensor([0.0, 0.6, 0.3, 0.1])
+    v.scores = np.array([0.0, 0.6, 0.3, 0.1], dtype=np.float32)
     v.set_weights()
 
     call = mock_subtensor.set_weights_calls[0]
@@ -239,4 +238,3 @@ async def test_run_epoch_decays_edges(
 
     edge_after = graph_store.outgoing_edge_weight_sum("node-1")
     assert edge_after < edge_before
-

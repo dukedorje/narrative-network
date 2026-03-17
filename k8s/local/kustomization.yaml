@@ -58,6 +58,24 @@ patches:
       kind: Secret
       metadata:
         name: narrative-network-secrets
+  - target:
+      kind: Deployment
+      name: miner
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: miner
+  - target:
+      kind: Service
+      name: miner
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: miner
 
   # --- Scale down replicas for local dev ---
   - target:

@@ -61,6 +61,14 @@ class MockAxonInfo:
         self.uid = uid
 
 
+class MockNeuron:
+    """Minimal neuron info with stake and hotkey (matches bt.NeuronInfo interface)."""
+
+    def __init__(self, hotkey: str, stake: float):
+        self.hotkey = hotkey
+        self.stake = stake
+
+
 class MockMetagraph:
     """Configurable metagraph mock with hotkeys, UIDs, stakes, and validator permits."""
 
@@ -80,6 +88,11 @@ class MockMetagraph:
 
         serving = axon_serving or [True] * n
         self.axons = [MockAxonInfo(is_serving=s, uid=i) for i, s in enumerate(serving)]
+
+        self.neurons = [
+            MockNeuron(hotkey=hk, stake=s)
+            for hk, s in zip(self.hotkeys, self.S)
+        ]
 
     def sync(self, subtensor=None) -> None:
         """No-op sync."""

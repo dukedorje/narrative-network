@@ -17,7 +17,7 @@ data:
 
   # OpenRouter / Narrative miner
   AXON_OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
-  AXON_OPENROUTER_MODEL: "openrouter/auto"
+  AXON_OPENROUTER_MODEL: "anthropic/claude-3.5-haiku"
   AXON_NARRATIVE_MAX_TOKENS: "400"
   AXON_NARRATIVE_TEMPERATURE: "0.75"
 

@@ -41,9 +41,10 @@ sync:
 build-frontend:
     ssh {{server}} "cd ~/narrative-network && docker build --no-cache -f Dockerfile.frontend -t narrative-network-frontend:latest ."
 
-# Import image into k3s containerd
+# Import image into k3s containerd (force replace)
 import-frontend:
-    ssh {{server}} "docker save narrative-network-frontend:latest | k3s ctr images import -"
+    ssh {{server}} "k3s crictl rmi docker.io/library/narrative-network-frontend:latest 2>/dev/null || true; \
+        docker save narrative-network-frontend:latest | k3s ctr images import -"
 
 # Restart frontend deployment
 restart-frontend:
@@ -59,9 +60,10 @@ deploy-python service: sync (build-python service) (import-python service) (rest
 build-python service:
     ssh {{server}} "cd ~/narrative-network && docker build --no-cache -f Dockerfile.python --target {{service}} -t narrative-network-{{service}}:latest ."
 
-# Import a Python service image
+# Import a Python service image (force replace)
 import-python service:
-    ssh {{server}} "docker save narrative-network-{{service}}:latest | k3s ctr images import -"
+    ssh {{server}} "k3s crictl rmi docker.io/library/narrative-network-{{service}}:latest 2>/dev/null || true; \
+        docker save narrative-network-{{service}}:latest | k3s ctr images import -"
 
 # Restart a Python service
 restart-python service:
@@ -86,13 +88,14 @@ _build-all:
         docker build --no-cache -f Dockerfile.frontend -t narrative-network-frontend:latest ."
     echo "All images built."
 
-# Import all images into k3s
+# Import all images into k3s (force replace stale images)
 _import-all:
     #!/usr/bin/env bash
     set -e
     echo "Importing images into k3s..."
     for svc in gateway validator miner frontend; do
-        ssh {{server}} "docker save narrative-network-${svc}:latest | k3s ctr images import -"
+        ssh {{server}} "k3s crictl rmi docker.io/library/narrative-network-${svc}:latest 2>/dev/null || true; \
+            docker save narrative-network-${svc}:latest | k3s ctr images import -"
     done
     echo "All images imported."
 

@@ -107,22 +107,28 @@ class LocalVotingEngine(VotingEngine):
         metagraph = MockMetagraph(n=len(voter_hotkeys))
         subtensor = MockSubtensor(metagraph=metagraph)
 
-        # Bypass the _BT_AVAILABLE guard in VotingEngine.__init__ by setting
-        # attributes directly (same attributes the parent __init__ would set).
-        object.__init__(self)
-        self.subtensor = subtensor
-        self.netuid = 0
-        self.voting_open_blocks = (
-            voting_open_blocks if voting_open_blocks is not None else VOTING_OPEN_BLOCKS
-        )
-        self.quorum_ratio = (
-            quorum_ratio if quorum_ratio is not None else VOTING_QUORUM_RATIO
-        )
-        self.pass_ratio = (
-            pass_ratio if pass_ratio is not None else VOTING_PASS_RATIO
-        )
-        self._votes: dict = {}
-        self._proposals: dict = {}
+        # Use the parent constructor via the _BT_AVAILABLE-agnostic path:
+        # MockSubtensor satisfies the bt.Subtensor type at runtime, and we
+        # temporarily patch _BT_AVAILABLE to bypass the guard.
+        import evolution.voting as _voting_mod
+        _orig = _voting_mod._BT_AVAILABLE
+        _voting_mod._BT_AVAILABLE = True
+        try:
+            super().__init__(
+                subtensor=subtensor,
+                netuid=0,
+                voting_open_blocks=(
+                    voting_open_blocks if voting_open_blocks is not None else VOTING_OPEN_BLOCKS
+                ),
+                quorum_ratio=(
+                    quorum_ratio if quorum_ratio is not None else VOTING_QUORUM_RATIO
+                ),
+                pass_ratio=(
+                    pass_ratio if pass_ratio is not None else VOTING_PASS_RATIO
+                ),
+            )
+        finally:
+            _voting_mod._BT_AVAILABLE = _orig
 
         self._clock = block_clock or LocalBlockClock()
         self._fixed_stakes = {hk: 1.0 / len(voter_hotkeys) for hk in voter_hotkeys}
@@ -131,6 +137,10 @@ class LocalVotingEngine(VotingEngine):
     def _get_stake_weight(self, voter_hotkey: str) -> float:
         """Return fixed equal stake weight instead of metagraph lookup."""
         return self._fixed_stakes.get(voter_hotkey, 0.0)
+
+    def _get_total_eligible_stake(self) -> float:
+        """Return sum of all fixed stakes (always 1.0 for equal-weight voters)."""
+        return sum(self._fixed_stakes.values())
 
     @property
     def voter_hotkeys(self) -> list[str]:

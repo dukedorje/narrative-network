@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -187,6 +188,7 @@ class PruningEngine:
         collapse_consecutive: int = DEFAULT_COLLAPSE_CONSECUTIVE,
         min_traversals: int = PRUNING_MIN_TRAVERSALS,
         nla_client: "NLASettlementClient | None" = None,
+        exempt_node_ids_fn: Callable[[], set[str]] | None = None,
     ) -> None:
         self.window_size = window_size
         self.warning_threshold = warning_threshold
@@ -200,6 +202,10 @@ class PruningEngine:
         self._nla_client = nla_client if nla_client is not None else (
             NLASettlementClient() if NLASettlementClient is not None else None
         )
+
+        # Callback returning node IDs that should be exempt from pruning
+        # (e.g. nodes currently in the integration pipeline).
+        self._exempt_node_ids_fn = exempt_node_ids_fn or (lambda: set())
 
     # ------------------------------------------------------------------
     # Public API
@@ -252,9 +258,12 @@ class PruningEngine:
         - Any phase: mean recovers above warning_threshold -> HEALTHY
         """
         collapses: list[CollapsePassage] = []
+        exempt = self._exempt_node_ids_fn()
 
         for node_id, state in self._states.items():
             if state.phase == PrunePhase.COLLAPSED:
+                continue
+            if node_id in exempt:
                 continue
 
             mean = state.window.mean()

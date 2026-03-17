@@ -10,8 +10,8 @@ Usage:
 import sys
 import os
 
+import numpy as np
 import pytest
-import torch
 
 # Root-level conftest classes are imported via sys.path; make sure tests/ is on path.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

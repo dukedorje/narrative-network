@@ -1,9 +1,11 @@
 """Emission calculation for Narrative Network.
 
 Three pools map miner performance to TAO emission weights:
-  - TraversalPool  (50%): rewards high-traffic, low-latency nodes
-  - QualityPool    (30%): rewards narrative quality scores
-  - TopologyPool   (20%): rewards structurally important bridge nodes
+  - TraversalPool  (40%): rewards high-traffic, low-latency nodes
+  - QualityPool    (35%): rewards narrative quality scores
+  - TopologyPool   (25%): rewards structurally important bridge nodes
+
+Pool shares are configured in subnet/config.py (EMISSION_*_SHARE constants).
 
 EmissionCalculator combines pools into the final weight vector submitted
 to Yuma Consensus via set_weights().

@@ -14,10 +14,8 @@ from subnet._bt_compat import _BT_AVAILABLE, get_logger
 
 if _BT_AVAILABLE:
     import bittensor as bt
-    import torch
 else:
     bt = None  # type: ignore
-    torch = None  # type: ignore
 
 from domain.corpus import MerkleProver
 from subnet import NETUID
@@ -38,6 +36,16 @@ try:
 except ImportError:
     PruningEngine = None  # type: ignore
     EpochScore = None  # type: ignore
+
+try:
+    from evolution.integration import IntegrationManager
+    from evolution.nla_settlement import NLASettlementClient
+    from evolution.voting import BondReturn, VotingEngine
+except ImportError:
+    IntegrationManager = None  # type: ignore
+    NLASettlementClient = None  # type: ignore
+    BondReturn = None  # type: ignore
+    VotingEngine = None  # type: ignore
 
 if _BT_AVAILABLE:
     from subnet.protocol import KnowledgeQuery, NarrativeHop, WeightCommit
@@ -80,7 +88,7 @@ class Validator:
 
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         self.hotkeys = copy(self.metagraph.hotkeys)
-        self.scores = torch.zeros(len(self.metagraph.hotkeys))
+        self.scores = np.zeros(len(self.metagraph.hotkeys), dtype=np.float32)
         self.step = 0
 
         # Maps uid -> hex Merkle root string committed by that miner.
@@ -106,8 +114,40 @@ class Validator:
         # uid -> graph node_id mapping, populated from manifest registration
         self._uid_to_node_id: dict[int, str] = {}
 
-        # Pruning engine (nla_client=None — NLA settlement not yet wired)
-        self.pruning_engine = PruningEngine(nla_client=None) if PruningEngine is not None else None
+        # Shared NLA client for all evolution components
+        self._nla_client = NLASettlementClient() if NLASettlementClient is not None else None
+
+        # Integration manager (ramp-in of accepted proposals)
+        self.integration_manager = (
+            IntegrationManager(nla_client=self._nla_client)
+            if IntegrationManager is not None else None
+        )
+
+        # Pruning engine — exempt nodes currently in integration pipeline
+        exempt_fn = (
+            self.integration_manager.integrating_node_ids
+            if self.integration_manager is not None else None
+        )
+        self.pruning_engine = (
+            PruningEngine(nla_client=self._nla_client, exempt_node_ids_fn=exempt_fn)
+            if PruningEngine is not None else None
+        )
+
+        # Voting engine (tallies votes and finalises proposals each epoch)
+        self.voting_engine = (
+            VotingEngine(
+                subtensor=self.subtensor,
+                netuid=NETUID,
+                nla_client=self._nla_client,
+            )
+            if VotingEngine is not None else None
+        )
+
+        # Bond return handler (returns/burns bonds after vote outcomes)
+        self.bond_return = (
+            BondReturn(subtensor=self.subtensor, nla_client=self._nla_client)
+            if BondReturn is not None else None
+        )
 
         # Curated challenge queries covering diverse knowledge domains
         self._challenge_queries = [
@@ -133,7 +173,7 @@ class Validator:
 
         # Resize score array if metagraph grew
         if len(self.metagraph.hotkeys) > len(self.scores):
-            new_scores = torch.zeros(len(self.metagraph.hotkeys))
+            new_scores = np.zeros(len(self.metagraph.hotkeys), dtype=np.float32)
             new_scores[: len(self.scores)] = self.scores
             self.scores = new_scores
 
@@ -149,11 +189,12 @@ class Validator:
     # Score accumulation
     # ------------------------------------------------------------------
 
-    def update_scores(self, rewards: torch.FloatTensor, uids: list[int]) -> None:
-        if torch.isnan(rewards).any():
-            rewards = torch.nan_to_num(rewards, nan=0.0)
+    def update_scores(self, rewards: np.ndarray, uids: list[int]) -> None:
+        if np.isnan(rewards).any():
+            rewards = np.nan_to_num(rewards, nan=0.0)
 
-        scattered = self.scores.scatter(0, torch.LongTensor(uids), rewards)
+        scattered = self.scores.copy()
+        scattered[uids] = rewards
         self.scores = MOVING_AVERAGE_ALPHA * scattered + (1 - MOVING_AVERAGE_ALPHA) * self.scores
 
     # ------------------------------------------------------------------
@@ -161,9 +202,9 @@ class Validator:
     # ------------------------------------------------------------------
 
     def set_weights(self) -> None:
-        norm = torch.norm(self.scores, p=1)
+        norm = np.linalg.norm(self.scores, ord=1)
         weights = self.scores / norm if norm != 0 else self.scores
-        weights = torch.nan_to_num(weights, nan=0.0)
+        weights = np.nan_to_num(weights, nan=0.0)
 
         response = self.subtensor.set_weights(
             wallet=self.wallet,
@@ -394,7 +435,7 @@ class Validator:
         calculator = EmissionCalculator()
         weights = calculator.compute(snapshots)
 
-        rewards = torch.zeros(len(challenge_uids))
+        rewards = np.zeros(len(challenge_uids), dtype=np.float32)
         for i, w in enumerate(weights):
             rewards[i] = w
 
@@ -422,6 +463,43 @@ class Validator:
                 for collapse in collapses:
                     self.graph_store.set_node_state(collapse.node_id, "Pruned")
                     _log.warning("Node %s pruned: %s", collapse.node_id, collapse.reason)
+
+        # --- Evolution: voting finalisation and integration advancement ---
+        current_block = None
+        try:
+            current_block = self.subtensor.get_current_block()
+        except Exception as exc:
+            _log.warning("Could not fetch current block for evolution: %s", exc)
+
+        if current_block is not None:
+            # Finalise any proposals whose voting window has closed
+            if self.voting_engine is not None:
+                tally_results = self.voting_engine.process_epoch(current_block)
+                for result in tally_results:
+                    proposal = self.voting_engine._proposals.get(result.proposal_id)
+                    if proposal is None:
+                        continue
+                    if result.passed and self.bond_return is not None:
+                        self.bond_return.return_bond(proposal)
+                        if self.integration_manager is not None:
+                            self.integration_manager.enqueue(proposal, current_block)
+                    elif not result.passed and self.bond_return is not None:
+                        self.bond_return.burn_bond(proposal)
+
+            # Advance integration pipeline for nodes in ramp-in
+            if self.integration_manager is not None:
+                node_scores_for_integration: dict[str, float] = {}
+                for uid in challenge_uids:
+                    node_id = self._uid_to_node_id.get(uid, f"node-{uid}")
+                    node_scores_for_integration[node_id] = quality_scores.get(uid, 0.0)
+                newly_live = self.integration_manager.process_epoch(
+                    current_block, node_scores_for_integration,
+                )
+                for node_id in newly_live:
+                    self.graph_store.set_node_state(node_id, "Live")
+                    _log.info("Node %s completed integration and is now LIVE", node_id)
+                    if self.pruning_engine is not None:
+                        self.pruning_engine.register_node(node_id)
 
         # FUTURE: Comparative attestation -- head-to-head miner comparison scoring
         # FUTURE: LLM adversarial controls -- detect and penalize gaming of narrative quality
@@ -496,8 +574,11 @@ class LocalValidator:
     def __init__(self) -> None:
         import logging
 
+        from subnet.events import get_event_bus, emit  # noqa: F401 — used in run_epoch
+
         self.log = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO)
+        self._event_bus_initialized = False
 
         from seed.loader import load_topology
         from subnet.harness import create_local_network
@@ -556,6 +637,20 @@ class LocalValidator:
         challenge_axons = [self.metagraph.axons[uid] for uid in challenge_uids]
 
         self.log.info("Epoch %d: challenging UIDs %s", self.step, challenge_uids)
+
+        # Lazy event bus init + epoch.started
+        if not self._event_bus_initialized:
+            import os
+            from subnet.events import get_event_bus
+            await get_event_bus(os.environ.get("REDIS_URL"))
+            self._event_bus_initialized = True
+
+        from subnet.events import emit
+        await emit("epoch.started", "validator", {
+            "epoch": self.step,
+            "challenge_uids": challenge_uids,
+            "query_text": test_query,
+        }, correlation_id=f"epoch-{self.step}")
 
         zero_vec = [0.0] * EMBEDDING_DIM
 

@@ -8,7 +8,7 @@ metadata:
     app: gateway
     app.kubernetes.io/part-of: narrative-network
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: gateway
@@ -34,16 +34,16 @@ spec:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 15
-            failureThreshold: 3
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 10
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
           volumeMounts:
             - name: embedding-cache
               mountPath: /data/embedding_cache

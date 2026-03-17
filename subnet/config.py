@@ -151,10 +151,15 @@ DRIFT_MAX_COSINE_DISTANCE: float = float(_env("DRIFT_MAX_COSINE_DISTANCE", 0.35)
 # Integration
 INTEGRATION_BLOCKS: int = int(_env("INTEGRATION_BLOCKS", 600))    # ~2 h
 INTEGRATION_MIN_SCORE: float = float(_env("INTEGRATION_MIN_SCORE", 0.50))
+INTEGRATION_MAX_RAMP_EXTENSIONS: int = int(_env("INTEGRATION_MAX_RAMP_EXTENSIONS", 3))
 
 # Node registration via manifest
 NODE_REGISTRATION_ENABLED: bool = bool(int(_env("NODE_REGISTRATION_ENABLED", 1)))
 PRUNING_ENABLED: bool = bool(int(_env("PRUNING_ENABLED", 1)))
+# PRUNING_EPOCH_INTERVAL is epoch-based (1 epoch = EPOCH_SLEEP_S seconds),
+# NOT block-based. The validator calls pruning_engine.process_epoch() every
+# PRUNING_EPOCH_INTERVAL epochs.  10 epochs * 60 s/epoch = ~10 min.
+# (Distinct from PRUNING_INTERVAL_BLOCKS above, which is currently unused.)
 PRUNING_EPOCH_INTERVAL: int = int(_env("PRUNING_EPOCH_INTERVAL", 10))
 
 # ---------------------------------------------------------------------------

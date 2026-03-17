@@ -85,6 +85,12 @@ class NLASettlementClient:
         self.chain = chain
         self._client: httpx.AsyncClient | None = None
 
+    async def __aenter__(self) -> "NLASettlementClient":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
@@ -121,7 +127,7 @@ class NLASettlementClient:
         to Alkahest BaseEscrowObligation + stake-weighted VotingArbiter.
         """
         text = (
-            f"Proposal Bond Agreement — Narrative Network Narrative Network\n\n"
+            f"Proposal Bond Agreement — Narrative Network\n\n"
             f"Proposer: {proposer_hotkey}\n"
             f"Proposal ID: {proposal_id}\n"
             f"Action: {proposal_type} node '{node_id}'\n"
@@ -158,7 +164,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for bond return on successful node integration."""
         text = (
-            f"Node Integration Bond Return — Narrative Network Narrative Network\n\n"
+            f"Node Integration Bond Return — Narrative Network\n\n"
             f"Node: {node_id}\n"
             f"Proposal: {proposal_id}\n"
             f"Owner: {proposer_hotkey}\n\n"
@@ -190,7 +196,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for slash-on-collapse settlement."""
         text = (
-            f"Node Collapse Penalty Agreement — Narrative Network Narrative Network\n\n"
+            f"Node Collapse Penalty Agreement — Narrative Network\n\n"
             f"Node: {node_id}\n"
             f"Owner: {proposer_hotkey}\n"
             f"Epoch: {epoch}\n"

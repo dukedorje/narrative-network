@@ -736,8 +736,10 @@ class _LocalNarrator:
             )
 
         if not self._api_key:
-            # Fallback: return a basic template if no API key
-            return self._placeholder(destination_node_id, adjacent_nodes or [])
+            return self._placeholder(
+                destination_node_id, adjacent_nodes or [],
+                reason="No OPENROUTER_API_KEY configured — set it to enable LLM narrative generation",
+            )
 
         client = self._get_client()
         try:
@@ -764,7 +766,7 @@ class _LocalNarrator:
                     response.choices[0].finish_reason,
                     getattr(response, "model", "unknown"),
                 )
-                return self._placeholder(destination_node_id, adjacent_nodes or [])
+                return self._placeholder(destination_node_id, adjacent_nodes or [], reason="LLM returned empty response")
             result = json.loads(raw)
             log.info(
                 "LLM generated passage for %s (%d chars, model=%s)",
@@ -778,13 +780,13 @@ class _LocalNarrator:
                 "Narrator: JSON parse error: %s (raw=%r)",
                 exc, raw[:200] if raw else "empty",
             )
-            return self._placeholder(destination_node_id, adjacent_nodes or [])
+            return self._placeholder(destination_node_id, adjacent_nodes or [], reason="LLM response parse error")
         except Exception as exc:
             log.error("Narrator: generation error: %s", exc)
-            return self._placeholder(destination_node_id, adjacent_nodes or [])
+            return self._placeholder(destination_node_id, adjacent_nodes or [], reason=f"LLM error: {exc}")
 
-    def _placeholder(self, node_id: str, adjacent: list[str]) -> dict:
-        """Fallback when OpenRouter is unavailable."""
+    def _placeholder(self, node_id: str, adjacent: list[str], *, reason: str = "") -> dict:
+        """Fallback when narrative generation is unavailable."""
         cards = [
             {
                 "text": f"Explore {nid.replace('-', ' ')}",
@@ -794,11 +796,9 @@ class _LocalNarrator:
             }
             for nid in adjacent[:3]
         ]
+        msg = reason or "Narrative generation unavailable"
         return {
-            "narrative_passage": (
-                f"(No OPENROUTER_API_KEY configured — set it to enable LLM narrative generation.) "
-                f"You are at {node_id.replace('-', ' ').title()}."
-            ),
+            "narrative_passage": f"({msg}.) You are at {node_id.replace('-', ' ').title()}.",
             "choice_cards": cards,
             "knowledge_synthesis": "",
         }

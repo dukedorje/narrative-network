@@ -23,7 +23,12 @@ from enum import Enum
 from evolution.proposal import NodeProposal, ProposalStatus
 from evolution.nla_settlement import NLASettlementClient
 from orchestrator.unbrowse import UnbrowseClient
-from subnet.config import INCUBATION_BLOCKS, INTEGRATION_BLOCKS, INTEGRATION_MIN_SCORE
+from subnet.config import (
+    INCUBATION_BLOCKS,
+    INTEGRATION_BLOCKS,
+    INTEGRATION_MAX_RAMP_EXTENSIONS,
+    INTEGRATION_MIN_SCORE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +71,7 @@ class IntegrationState:
     ramp_start_block: int = 0
     ramp_end_block: int = 0
     current_score: float = 0.0
+    ramp_extensions: int = 0
 
     def edge_weight_at(self, current_block: int) -> float:
         """Return the current edge weight based on linear ramp progress.
@@ -123,17 +129,20 @@ class IntegrationManager:
         incubation_blocks: int = INCUBATION_BLOCKS,
         integration_blocks: int = INTEGRATION_BLOCKS,
         min_score: float = INTEGRATION_MIN_SCORE,
+        max_ramp_extensions: int = INTEGRATION_MAX_RAMP_EXTENSIONS,
+        nla_client: "NLASettlementClient | None" = None,
     ) -> None:
         self.incubation_blocks = incubation_blocks
         self.integration_blocks = integration_blocks
         self.min_score = min_score
+        self.max_ramp_extensions = max_ramp_extensions
 
         # proposal_id -> IntegrationState
         self._queue: dict[str, IntegrationState] = {}
         # proposal_id -> NodeProposal
         self._proposals: dict[str, NodeProposal] = {}
 
-        self._nla_client = NLASettlementClient()
+        self._nla_client = nla_client or NLASettlementClient()
         self._unbrowse = UnbrowseClient()
 
     # ------------------------------------------------------------------
@@ -251,15 +260,29 @@ class IntegrationManager:
                     self._go_live(state, pid, current_block)
                     newly_live.append(state.node_id)
                 elif ramp_complete and not score_ok:
-                    log.warning(
-                        "Node %s ramp complete but score %.3f < min %.3f; extending ramp by %d blocks",
-                        state.node_id,
-                        state.current_score,
-                        self.min_score,
-                        self.integration_blocks,
-                    )
-                    # Extend the ramp window to give the node more time
-                    state.ramp_end_block = current_block + self.integration_blocks
+                    if state.ramp_extensions < self.max_ramp_extensions:
+                        state.ramp_extensions += 1
+                        log.warning(
+                            "Node %s ramp complete but score %.3f < min %.3f; "
+                            "extending ramp (%d/%d) by %d blocks",
+                            state.node_id,
+                            state.current_score,
+                            self.min_score,
+                            state.ramp_extensions,
+                            self.max_ramp_extensions,
+                            self.integration_blocks,
+                        )
+                        state.ramp_end_block = current_block + self.integration_blocks
+                    else:
+                        log.warning(
+                            "Node %s exhausted %d ramp extensions with score %.3f < min %.3f; "
+                            "collapsing integration",
+                            state.node_id,
+                            self.max_ramp_extensions,
+                            state.current_score,
+                            self.min_score,
+                        )
+                        self._collapse_integration(state, pid, current_block)
 
         return newly_live
 
@@ -271,9 +294,33 @@ class IntegrationManager:
         """Return all integrations not yet LIVE."""
         return [s for s in self._queue.values() if s.phase != _IntegrationPhase.LIVE]
 
+    def integrating_node_ids(self) -> set[str]:
+        """Return node IDs currently in any integration phase (not yet LIVE).
+
+        Used by the PruningEngine to exempt integrating nodes from pruning.
+        """
+        return {
+            s.node_id for s in self._queue.values()
+            if s.phase != _IntegrationPhase.LIVE
+        }
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _collapse_integration(self, state: IntegrationState, pid: str, current_block: int) -> None:
+        """Remove a node that failed to meet min score after max extensions."""
+        state.phase = _IntegrationPhase.FORESHADOW  # terminal — will be cleaned up
+        proposal = self._proposals.pop(pid, None)
+        del self._queue[pid]
+        if proposal is not None:
+            proposal.status = ProposalStatus.REJECTED
+        log.warning(
+            "Integration collapsed for node %s (proposal %s) at block %d",
+            state.node_id,
+            pid,
+            current_block,
+        )
 
     def _go_live(self, state: IntegrationState, pid: str, current_block: int) -> None:
         state.phase = _IntegrationPhase.LIVE

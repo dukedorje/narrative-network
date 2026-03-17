@@ -101,11 +101,15 @@ class BondReturn:
     loop is available. Callers do not need to await.
     """
 
-    def __init__(self, subtensor: "bt.Subtensor") -> None:
+    def __init__(
+        self,
+        subtensor: "bt.Subtensor",
+        nla_client: "NLASettlementClient | None" = None,
+    ) -> None:
         if not _BT_AVAILABLE:
             raise ImportError("bittensor is required for BondReturn")
         self.subtensor = subtensor
-        self.nla_client = NLASettlementClient()
+        self.nla_client = nla_client or NLASettlementClient()
 
     def return_bond(self, proposal: NodeProposal) -> None:
         """Return bond to proposer. Schedules NLA settlement in background."""
@@ -126,6 +130,7 @@ class BondReturn:
             proposal.proposer_hotkey,
             proposal.proposal_id,
         )
+        proposal.status = ProposalStatus.BOND_BURNED
         self._schedule_settlement(proposal, action="burn")
 
     def _schedule_settlement(self, proposal: NodeProposal, action: str) -> None:
@@ -183,6 +188,7 @@ class VotingEngine:
         voting_open_blocks: int = VOTING_OPEN_BLOCKS,
         quorum_ratio: float = VOTING_QUORUM_RATIO,
         pass_ratio: float = VOTING_PASS_RATIO,
+        nla_client: "NLASettlementClient | None" = None,
     ) -> None:
         if not _BT_AVAILABLE:
             raise ImportError("bittensor is required for VotingEngine")
@@ -191,6 +197,7 @@ class VotingEngine:
         self.voting_open_blocks = voting_open_blocks
         self.quorum_ratio = quorum_ratio
         self.pass_ratio = pass_ratio
+        self._nla_client = nla_client or NLASettlementClient()
 
         # proposal_id -> list[Vote]
         self._votes: dict[str, list[Vote]] = {}
@@ -258,14 +265,24 @@ class VotingEngine:
         return vote
 
     def tally(self, proposal_id: str) -> TallyResult:
-        """Compute the current tally for a proposal without finalising."""
+        """Compute the current tally for a proposal without finalising.
+
+        Quorum is checked as a fraction of *total eligible stake* (sum of all
+        validator stake weights in the metagraph), not just the sum of
+        participating weights.  This prevents a single low-stake validator
+        from unilaterally meeting quorum.
+        """
         votes = self._votes.get(proposal_id, [])
         for_w = sum(v.stake_weight for v in votes if v.choice == VoteChoice.FOR)
         against_w = sum(v.stake_weight for v in votes if v.choice == VoteChoice.AGAINST)
         abstain_w = sum(v.stake_weight for v in votes if v.choice == VoteChoice.ABSTAIN)
         participating = for_w + against_w
 
-        quorum_met = participating >= self.quorum_ratio
+        total_eligible = self._get_total_eligible_stake()
+        if total_eligible > 0:
+            quorum_met = (participating / total_eligible) >= self.quorum_ratio
+        else:
+            quorum_met = False
         passed = quorum_met and (for_w / participating >= self.pass_ratio if participating > 0 else False)
 
         return TallyResult(
@@ -327,10 +344,29 @@ class VotingEngine:
         """Register the draft NLA agreement with the Arkhai service."""
         try:
             if proposal.nla_agreement is not None:
-                client = NLASettlementClient()
-                await client.register(proposal.nla_agreement)
+                await self._nla_client.register(proposal.nla_agreement)
         except Exception as exc:
             log.warning("NLA registration failed for %s (non-blocking): %s", proposal.proposal_id, exc)
+
+    def _get_total_eligible_stake(self) -> float:
+        """Return the total *normalised* stake across all validators.
+
+        Since ``_get_stake_weight`` normalises each voter's stake by the
+        metagraph total, the sum of all normalised weights is always 1.0.
+        We compute it explicitly here so that the quorum check compares
+        the participating fraction against the full network, preventing a
+        single low-stake validator from unilaterally meeting quorum.
+        """
+        try:
+            metagraph = self.subtensor.metagraph(self.netuid)
+            total_raw = sum(float(n.stake) for n in metagraph.neurons)
+            if total_raw == 0:
+                return 0.0
+            # Sum of normalised weights == 1.0
+            return sum(float(n.stake) / total_raw for n in metagraph.neurons)
+        except Exception as exc:
+            log.warning("Could not fetch total eligible stake: %s — using 0", exc)
+            return 0.0
 
     def _check_window_open(self, proposal: NodeProposal, current_block: int) -> None:
         window_end = proposal.submitted_block + self.voting_open_blocks

@@ -105,7 +105,7 @@ kubectl apply -k k8s/            # Deploy full stack
 - **Session**: A player traverses the graph via NarrativeHop synapses; miners compete to narrate each hop
 - **Scoring**: Four axes — traversal relevance, narrative quality, topology importance, corpus integrity
 - **Edge dynamics**: Reinforced by quality traversals, multiplicative decay each epoch
-- **Emission pools**: Traversal (45%), Quality (30%), Topology (15%), Reserve (10%)
+- **Emission pools**: Traversal (40%), Quality (35%), Topology (25%) — configured in `subnet/config.py`
 - **Node lifecycle**: Proposal → Voting → Incubation → Integration (foreshadow/bridge/ramp) → Live → (Pruning if underperforming)
 - **Subnet ID**: 42 (`NETUID` in `subnet/__init__.py`)
 

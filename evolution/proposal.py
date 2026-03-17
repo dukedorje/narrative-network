@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -40,6 +39,7 @@ class ProposalStatus(str, Enum):
     INTEGRATING = "INTEGRATING"
     LIVE = "LIVE"
     BOND_RETURNED = "BOND_RETURNED"
+    BOND_BURNED = "BOND_BURNED"
 
 
 class ProposalType(str, Enum):
@@ -184,8 +184,8 @@ class ProposalSubmitter:
             commitment[:12] + "...",
         )
 
-        self._lock_bond(proposal)
         self._commit_on_chain(proposal, commitment)
+        self._lock_bond(proposal)
 
         proposal.status = ProposalStatus.SUBMITTED
         return proposal
@@ -214,8 +214,9 @@ class ProposalSubmitter:
         try:
             return self.subtensor.get_current_block()
         except Exception as exc:
-            log.warning("Could not fetch current block: %s — using timestamp fallback", exc)
-            return int(time.time())
+            raise RuntimeError(
+                f"Cannot fetch current block from subtensor: {exc}"
+            ) from exc
 
     def _lock_bond(self, proposal: NodeProposal) -> None:
         """Lock the bond amount from the proposer's wallet.
