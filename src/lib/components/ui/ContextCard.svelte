@@ -27,10 +27,11 @@
 		{:else}
 			<div class="narrative-stream">
 				{#each narrativeHistory as passage, i (i)}
+					<!-- Stagger animation based on array length, so older passages fade in first/faster than newest -->
 					<p
 						class="passage"
 						class:latest={i === narrativeHistory.length - 1}
-						in:fly={{ y: 20, duration: 500, easing: cubicOut }}
+						in:fly={{ y: 20, duration: 600, delay: i * 150, easing: cubicOut }}
 					>
 						{passage}
 					</p>
@@ -74,7 +75,7 @@
 		font-size: 11px;
 		color: #6ee7b7;
 		text-transform: uppercase;
-		letter-spacing: 0.15em;
+		letter-spacing: 0.2em;
 		font-weight: 600;
 		display: inline-block;
 		margin-bottom: 8px;
@@ -84,8 +85,9 @@
 	}
 
 	.node-title {
+		font-family: var(--font-display);
 		font-size: 28px;
-		font-weight: 700;
+		font-weight: 600;
 		color: #f8fafc;
 		margin: 0;
 		text-transform: capitalize;
@@ -115,7 +117,9 @@
 	.passage {
 		color: #cbd5e1;
 		font-size: 16px;
-		line-height: 1.8;
+		line-height: 1.85;
+		letter-spacing: 0.01em;
+		font-weight: 400;
 		margin: 0;
 		transition: opacity 0.3s;
 		opacity: 0.7;
@@ -159,7 +163,7 @@
 	.label {
 		font-size: 11px;
 		text-transform: uppercase;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.15em;
 		font-weight: 600;
 		color: #14b8a6;
 	}
@@ -167,8 +171,30 @@
 	.synthesis-text {
 		color: #94a3b8;
 		font-size: 15px;
-		line-height: 1.6;
+		line-height: 1.65;
 		margin: 0;
 		font-style: italic;
+		letter-spacing: 0.01em;
+	}
+
+	/* Responsive */
+	@media (max-width: 768px) {
+		.context-header {
+			padding: 16px 20px 12px;
+		}
+		
+		.node-title {
+			font-size: 24px;
+		}
+
+		.context-content {
+			padding: 20px;
+			gap: 20px;
+		}
+
+		.passage {
+			font-size: 15px;
+			line-height: 1.7;
+		}
 	}
 </style>

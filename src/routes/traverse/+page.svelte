@@ -5,6 +5,8 @@
 	import InnerViewPanel from '$lib/components/traverse/InnerViewPanel.svelte';
 	import ContextCard from '$lib/components/ui/ContextCard.svelte';
 	import ChoiceCard from '$lib/components/ui/ChoiceCard.svelte';
+	import { audioManager, audioEnabled } from '$lib/stores/audio';
+	import { onMount } from 'svelte';
 
 	let { data } = $props();
 
@@ -46,6 +48,14 @@
 			});
 		}
 	});
+
+	onMount(() => {
+		audioManager.init();
+	});
+
+	function toggleAudio() {
+		audioEnabled.update(v => !v);
+	}
 
 	async function handleSearch(e?: SubmitEvent) {
 		e?.preventDefault();
@@ -107,6 +117,7 @@
 			hopData = result;
 			if (result.narrative_passage) {
 				narrativeHistory = [...narrativeHistory, result.narrative_passage];
+				audioManager.playUiSound('success');
 			}
 		} catch {
 			errorMessage = 'Could not connect to the gateway.';
@@ -180,17 +191,27 @@
 			</div>
 		</div>
 	{:else}
-		<!-- ── Active Traversal ───────────────────────────────────────── -->
 		<section class="traverse-bar">
 			<div class="traverse-bar-inner">
 				<span class="current-node-label">
 					{currentNodeId?.replace(/-/g, ' ') ?? 'Traversing...'}
 				</span>
-				<button class="reset-btn" onclick={resetSession}>New session</button>
+				<button class="reset-btn" onclick={resetSession} onmouseenter={() => audioManager.playUiSound('hover')}>New session</button>
+				<button
+					class="observer-toggle"
+					class:active={$audioEnabled}
+					onclick={toggleAudio}
+					onmouseenter={() => audioManager.playUiSound('hover')}
+					aria-label="Toggle Audio"
+				>
+					<span class="observer-icon">{$audioEnabled ? '🔊' : '🔈'}</span>
+					Audio
+				</button>
 				<button
 					class="observer-toggle"
 					class:active={graphSideOpen}
-					onclick={() => (graphSideOpen = !graphSideOpen)}
+					onclick={() => { audioManager.playUiSound('click'); graphSideOpen = !graphSideOpen; }}
+					onmouseenter={() => audioManager.playUiSound('hover')}
 				>
 					<span class="observer-icon">&#x25C8;</span>
 					Network Graph
@@ -198,7 +219,8 @@
 				<button
 					class="observer-toggle"
 					class:active={innerViewOpen}
-					onclick={() => (innerViewOpen = !innerViewOpen)}
+					onclick={() => { audioManager.playUiSound('click'); innerViewOpen = !innerViewOpen; }}
+					onmouseenter={() => audioManager.playUiSound('hover')}
 				>
 					<span class="observer-icon">&#x2B21;</span>
 					Observer
@@ -452,6 +474,7 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		flex-wrap: wrap;
 	}
 
 	.current-node-label {
@@ -460,6 +483,7 @@
 		font-weight: 600;
 		text-transform: capitalize;
 		flex: 1;
+		min-width: 120px;
 	}
 
 	.reset-btn {
@@ -682,5 +706,33 @@
 
 	.enter-btn:hover {
 		background: #047857;
+	}
+
+	/* ── Responsive breakpoints ─────────────────────────────────────── */
+	@media (max-width: 768px) {
+		.graph-panel-side {
+			width: 100vw;
+		}
+
+		.core-experience {
+			padding: 20px 16px;
+		}
+
+		.choice-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.hero-title {
+			font-size: 40px;
+		}
+
+		.traverse-bar {
+			padding: 10px 16px;
+		}
+
+		.observer-toggle, .reset-btn {
+			padding: 6px 10px;
+			font-size: 11px;
+		}
 	}
 </style>

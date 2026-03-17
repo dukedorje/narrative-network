@@ -67,26 +67,27 @@
 			const isCurrent = node.node_id === currentNodeId;
 			const isPath = pathSet.has(node.node_id);
 
-			state.scale.target = isCurrent ? 0.35 : isPath ? 0.25 : 0.15;
-			state.emissive.target = isCurrent ? 0.8 : isPath ? 0.5 : 0.1;
-			state.opacity.target = isCurrent ? 1.0 : isPath ? 0.9 : 0.5;
+			state.scale.target = isCurrent ? 0.25 : isPath ? 0.18 : 0.12;
+			state.emissive.target = isCurrent ? 1.0 : isPath ? 0.7 : 0.15;
+			state.opacity.target = isCurrent ? 1.0 : isPath ? 0.9 : 0.6;
 		}
 	});
 
 	// --- Colors ---
 	function nodeColor(nodeId: string, hasCorpus: boolean): string {
-		if (nodeId === currentNodeId) return '#6ee7b7';
-		if (pathSet.has(nodeId)) return '#34d399';
-		return hasCorpus ? '#93c5fd' : '#475569';
+		if (nodeId === currentNodeId) return '#14b8a6'; // teal
+		if (pathSet.has(nodeId)) return '#2dd4bf'; // lighter teal
+		return hasCorpus ? '#3b82f6' : '#64748b'; // blue or slate
 	}
 
 	// --- InstancedMesh setup ---
 	const MAX_INSTANCES = 256;
-	const geometry = new SphereGeometry(1, 20, 14); // Unit sphere, scaled per instance
+	const geometry = new SphereGeometry(1, 24, 16); // Unit sphere, scaled per instance
 	const material = new MeshStandardMaterial({
-		roughness: 0.25,
-		metalness: 0.1,
-		transparent: true
+		roughness: 0.15,
+		metalness: 0.4,
+		transparent: true,
+		opacity: 0.85
 	});
 	const dummy = new Object3D();
 	const tempColor = new Color();
@@ -182,22 +183,23 @@
 
 <style>
 	.node-label {
+		font-family: var(--font-mono);
 		font-size: 10px;
 		color: #64748b;
 		white-space: nowrap;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.5);
 		user-select: none;
 		pointer-events: none;
 	}
 
 	.node-label.current {
-		color: #6ee7b7;
-		font-weight: 700;
-		font-size: 12px;
+		color: #14b8a6;
+		font-weight: 600;
+		font-size: 11px;
 	}
 
 	.node-label.path {
-		color: #a7f3d0;
-		font-weight: 600;
+		color: #5eead4;
+		font-weight: 500;
 	}
 </style>

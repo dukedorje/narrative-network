@@ -134,9 +134,9 @@
 <CameraController {focusPosition} mode={cameraMode} />
 
 <!-- Lighting -->
-<T.AmbientLight intensity={0.4} />
-<T.DirectionalLight position={[8, 12, 8]} intensity={0.7} />
-<T.DirectionalLight position={[-5, -3, -8]} intensity={0.2} color="#93c5fd" />
+<T.AmbientLight intensity={0.6} />
+<T.DirectionalLight position={[8, 12, 8]} intensity={0.9} color="#e2e8f0" />
+<T.DirectionalLight position={[-5, -3, -8]} intensity={0.4} color="#5eead4" />
 
 <!-- Edges -->
 <EdgeLines positions={nodePositions} links={layoutLinks} {pathEdgeSet} />

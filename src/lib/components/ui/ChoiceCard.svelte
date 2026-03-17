@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import VanillaTilt from 'vanilla-tilt';
+
 	interface Props {
 		text: string;
 		destinationNodeId: string;
@@ -7,9 +10,29 @@
 	}
 
 	let { text, destinationNodeId, thematicColor, onClick }: Props = $props();
+
+	let cardEl: HTMLButtonElement;
+
+	onMount(() => {
+		VanillaTilt.init(cardEl, {
+			max: 4,
+			speed: 400,
+			scale: 1.02,
+			glare: true,
+			'max-glare': 0.15,
+			perspective: 1000
+		});
+
+		return () => {
+			if (cardEl && (cardEl as any).vanillaTilt) {
+				(cardEl as any).vanillaTilt.destroy();
+			}
+		};
+	});
 </script>
 
 <button
+	bind:this={cardEl}
 	class="choice-card group"
 	style="--thematic-color: {thematicColor};"
 	onclick={onClick}
@@ -37,14 +60,17 @@
 		text-align: left;
 		background: rgba(30, 41, 59, 0.4);
 		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		border: 1px solid rgba(51, 65, 85, 0.6);
 		border-radius: 16px;
 		padding: 24px;
 		cursor: pointer;
 		overflow: hidden;
-		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s;
 		width: 100%;
 		gap: 20px;
+		/* Prevent transform conflict with vanilla-tilt */
+		transform-style: preserve-3d;
 	}
 
 	.card-glow {
@@ -64,7 +90,6 @@
 	}
 
 	.choice-card:hover {
-		transform: translateY(-2px);
 		background: rgba(30, 41, 59, 0.6);
 		border-color: color-mix(in srgb, var(--thematic-color) 40%, rgba(51, 65, 85, 0.8));
 		box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.5),
@@ -77,11 +102,12 @@
 
 	.card-content {
 		position: relative;
-		z-index: 1;
+		z-index: 10;
 		flex: 1;
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
+		transform: translateZ(20px);
 	}
 
 	.destination-badge {
@@ -91,10 +117,11 @@
 		border: 1px solid color-mix(in srgb, var(--thematic-color) 30%, transparent);
 		border-radius: 6px;
 		font-size: 11px;
-		font-family: 'JetBrains Mono', monospace;
+		font-weight: 500;
+		font-family: var(--font-mono);
 		color: color-mix(in srgb, var(--thematic-color) 90%, white);
 		text-transform: capitalize;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.08em;
 	}
 
 	.choice-text {
@@ -103,6 +130,7 @@
 		line-height: 1.6;
 		margin: 0;
 		font-weight: 400;
+		letter-spacing: 0.01em;
 	}
 
 	.arrow-icon {
@@ -126,5 +154,22 @@
 		background: color-mix(in srgb, var(--thematic-color) 15%, rgba(15, 23, 42, 0.8));
 		border-color: color-mix(in srgb, var(--thematic-color) 30%, transparent);
 		transform: translateX(4px);
+	}
+
+	/* Responsive */
+	@media (max-width: 768px) {
+		.choice-card {
+			padding: 20px 16px;
+			gap: 12px;
+		}
+
+		.choice-text {
+			font-size: 15px;
+		}
+
+		.arrow-icon {
+			width: 32px;
+			height: 32px;
+		}
 	}
 </style>

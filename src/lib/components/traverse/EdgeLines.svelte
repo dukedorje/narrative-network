@@ -107,13 +107,13 @@
 <!-- Regular edges -->
 {#if hasRegularData}
 	<T.LineSegments geometry={regularGeo}>
-		<T.LineBasicMaterial color="#1e3a5f" opacity={0.4} transparent />
+		<T.LineBasicMaterial color="#334155" opacity={0.3} transparent />
 	</T.LineSegments>
 {/if}
 
 <!-- Path edges (glowing) -->
 {#if hasPathData}
 	<T.LineSegments geometry={pathGeo}>
-		<T.LineBasicMaterial color="#6ee7b7" opacity={0.9} transparent />
+		<T.LineBasicMaterial color="#14b8a6" opacity={0.8} transparent />
 	</T.LineSegments>
 {/if}
