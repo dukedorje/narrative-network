@@ -124,6 +124,15 @@ class MockSubtensor:
     def __init__(self, metagraph: MockMetagraph | None = None):
         self._metagraph = metagraph or MockMetagraph()
         self.set_weights_calls: list[dict] = []  # record calls for assertions
+        self._commitments: dict[tuple[int, int], str] = {}  # (netuid, uid) -> data
+
+    def get_commitment(self, netuid: int, uid: int, block: int | None = None) -> str | None:
+        """Retrieve a commitment stored by a miner. Returns None if not found."""
+        return self._commitments.get((netuid, uid))
+
+    def set_commitment(self, netuid: int, uid: int, data: str) -> None:
+        """Store a commitment for a miner (used by tests to simulate manifest publication)."""
+        self._commitments[(netuid, uid)] = data
 
     def metagraph(self, netuid: int) -> MockMetagraph:
         return self._metagraph

@@ -13,7 +13,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
-from evolution.nla_settlement import NLASettlementClient
+try:
+    from evolution.nla_settlement import NLASettlementClient
+except ImportError:
+    NLASettlementClient = None  # type: ignore
 from subnet.config import (
     PRUNING_MIN_TRAVERSALS,
 )
@@ -183,6 +186,7 @@ class PruningEngine:
         decay_threshold: float = DEFAULT_DECAY_THRESHOLD,
         collapse_consecutive: int = DEFAULT_COLLAPSE_CONSECUTIVE,
         min_traversals: int = PRUNING_MIN_TRAVERSALS,
+        nla_client: "NLASettlementClient | None" = None,
     ) -> None:
         self.window_size = window_size
         self.warning_threshold = warning_threshold
@@ -193,7 +197,9 @@ class PruningEngine:
         # node_id -> PruneState
         self._states: dict[str, PruneState] = {}
 
-        self._nla_client = NLASettlementClient()
+        self._nla_client = nla_client if nla_client is not None else (
+            NLASettlementClient() if NLASettlementClient is not None else None
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -348,6 +354,8 @@ class PruningEngine:
         self, state: PruneState, epoch: int, reason: str
     ) -> None:
         """Settle NLA bond burn on node collapse."""
+        if self._nla_client is None:
+            return
         if not state.proposer_hotkey:
             return
         try:

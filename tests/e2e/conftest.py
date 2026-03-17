@@ -12,11 +12,18 @@ import pytest
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip e2e tests unless E2E_BASE_URL is set."""
+    """Skip e2e tests that require a live deployment unless E2E_BASE_URL is set.
+
+    Tests that use the base_url/client/gw_path fixtures need a running service.
+    Tests that only use offline fixtures (tmp_path, etc.) run unconditionally.
+    """
     if not os.environ.get("E2E_BASE_URL"):
         skip = pytest.mark.skip(reason="E2E_BASE_URL not set")
+        live_fixtures = {"base_url", "client", "gw_path", "is_gateway_direct"}
         for item in items:
-            item.add_marker(skip)
+            # Skip only if the test depends on a live-service fixture
+            if live_fixtures.intersection(item.fixturenames):
+                item.add_marker(skip)
 
 
 @pytest.fixture

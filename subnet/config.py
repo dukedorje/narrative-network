@@ -152,6 +152,11 @@ DRIFT_MAX_COSINE_DISTANCE: float = float(_env("DRIFT_MAX_COSINE_DISTANCE", 0.35)
 INTEGRATION_BLOCKS: int = int(_env("INTEGRATION_BLOCKS", 600))    # ~2 h
 INTEGRATION_MIN_SCORE: float = float(_env("INTEGRATION_MIN_SCORE", 0.50))
 
+# Node registration via manifest
+NODE_REGISTRATION_ENABLED: bool = bool(int(_env("NODE_REGISTRATION_ENABLED", 1)))
+PRUNING_ENABLED: bool = bool(int(_env("PRUNING_ENABLED", 1)))
+PRUNING_EPOCH_INTERVAL: int = int(_env("PRUNING_EPOCH_INTERVAL", 10))
+
 # ---------------------------------------------------------------------------
 # Natural Language Agreements (Arkhai Alkahest)
 # ---------------------------------------------------------------------------
@@ -169,9 +174,9 @@ UNBROWSE_CORPUS_THRESHOLD: float = float(_env("UNBROWSE_CORPUS_THRESHOLD", 0.35)
 # ---------------------------------------------------------------------------
 # Emission pool shares (must sum to 1.0)
 # ---------------------------------------------------------------------------
-EMISSION_TRAVERSAL_SHARE: float = float(_env("EMISSION_TRAVERSAL_SHARE", 0.50))
-EMISSION_QUALITY_SHARE: float = float(_env("EMISSION_QUALITY_SHARE", 0.30))
-EMISSION_TOPOLOGY_SHARE: float = float(_env("EMISSION_TOPOLOGY_SHARE", 0.20))
+EMISSION_TRAVERSAL_SHARE: float = float(_env("EMISSION_TRAVERSAL_SHARE", 0.40))
+EMISSION_QUALITY_SHARE: float = float(_env("EMISSION_QUALITY_SHARE", 0.35))
+EMISSION_TOPOLOGY_SHARE: float = float(_env("EMISSION_TOPOLOGY_SHARE", 0.25))
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +265,11 @@ class SubnetConfig:
     emission_traversal_share: float = EMISSION_TRAVERSAL_SHARE
     emission_quality_share: float = EMISSION_QUALITY_SHARE
     emission_topology_share: float = EMISSION_TOPOLOGY_SHARE
+
+    # Node registration
+    node_registration_enabled: bool = NODE_REGISTRATION_ENABLED
+    pruning_enabled: bool = PRUNING_ENABLED
+    pruning_epoch_interval: int = PRUNING_EPOCH_INTERVAL
 
 
 # Commit-reveal (configured on-chain via btcli sudo set)

@@ -9,9 +9,9 @@ from subnet.graph_store import GraphStore
 
 
 @pytest.fixture
-def gs():
-    """Fresh in-memory GraphStore for each test."""
-    return GraphStore(db_path=None)
+def gs(tmp_path):
+    """GraphStore with KuzuDB persistence in a temp directory."""
+    return GraphStore(db_path=str(tmp_path / "test.db"))
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ def test_decay_prunes_at_floor(gs):
     """An edge already at EDGE_DECAY_FLOOR gets pruned after decay."""
     gs.upsert_edge("x", "y", weight=EDGE_DECAY_FLOOR)
     # Any decay rate will keep it at floor and trigger pruning
-    gs._mem.decay_all(decay_rate=EDGE_DECAY_RATE)
+    gs.decay_edges(decay_rate=EDGE_DECAY_RATE)
     assert "y" not in gs._mem._adj.get("x", {})
 
 
@@ -199,3 +199,76 @@ def test_outgoing_edge_weight_sum(gs):
 def test_outgoing_edge_weight_sum_no_edges(gs):
     gs.add_node("lonely")
     assert gs.outgoing_edge_weight_sum("lonely") == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Persistence across restart
+# ---------------------------------------------------------------------------
+
+
+def test_persistence_across_restart(tmp_path):
+    """Data added to a GraphStore is visible after creating a new instance with the same db_path."""
+    db_path = str(tmp_path / "persist.db")
+
+    gs1 = GraphStore(db_path=db_path)
+    gs1.add_node("node-a", state="Live", metadata={"key": "val"})
+    gs1.add_node("node-b", state="Incubating")
+    gs1.upsert_edge("node-a", "node-b", weight=2.5)
+
+    # Create a fresh instance pointing at the same db
+    gs2 = GraphStore(db_path=db_path)
+
+    assert gs2.get_node("node-a") is not None
+    assert gs2.get_node("node-a").state == "Live"
+    assert gs2.get_node("node-b") is not None
+    assert gs2.get_node("node-b").state == "Incubating"
+
+    edge = gs2._mem._adj.get("node-a", {}).get("node-b")
+    assert edge is not None
+    assert edge.weight == pytest.approx(2.5)
+
+
+# ---------------------------------------------------------------------------
+# set_node_state
+# ---------------------------------------------------------------------------
+
+
+def test_set_node_state(tmp_path):
+    """set_node_state updates state in memory and persists to KuzuDB."""
+    db_path = str(tmp_path / "state.db")
+
+    gs1 = GraphStore(db_path=db_path)
+    gs1.add_node("n1", state="Live")
+    assert gs1.get_node("n1").state == "Live"
+
+    gs1.set_node_state("n1", "Pruned")
+    assert gs1.get_node("n1").state == "Pruned"
+
+    # Verify persisted after restart
+    gs2 = GraphStore(db_path=db_path)
+    assert gs2.get_node("n1").state == "Pruned"
+
+
+# ---------------------------------------------------------------------------
+# get_nodes_by_state
+# ---------------------------------------------------------------------------
+
+
+def test_get_nodes_by_state(gs):
+    """get_nodes_by_state returns only nodes matching the requested state."""
+    gs.add_node("live1", state="Live")
+    gs.add_node("live2", state="Live")
+    gs.add_node("incub1", state="Incubating")
+    gs.add_node("pruned1", state="Pruned")
+
+    live_nodes = gs.get_nodes_by_state("Live")
+    assert {n.node_id for n in live_nodes} == {"live1", "live2"}
+
+    incub_nodes = gs.get_nodes_by_state("Incubating")
+    assert {n.node_id for n in incub_nodes} == {"incub1"}
+
+    pruned_nodes = gs.get_nodes_by_state("Pruned")
+    assert {n.node_id for n in pruned_nodes} == {"pruned1"}
+
+    empty = gs.get_nodes_by_state("NonExistent")
+    assert empty == []
