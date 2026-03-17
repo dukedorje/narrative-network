@@ -574,7 +574,7 @@ class LocalValidator:
     def __init__(self) -> None:
         import logging
 
-        from subnet.events import get_event_bus, emit  # noqa: F401 — used in run_epoch
+        from subnet.events import emit, get_event_bus  # noqa: F401 — used in run_epoch
 
         self.log = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO)
@@ -638,20 +638,6 @@ class LocalValidator:
 
         self.log.info("Epoch %d: challenging UIDs %s", self.step, challenge_uids)
 
-        # Lazy event bus init + epoch.started
-        if not self._event_bus_initialized:
-            import os
-            from subnet.events import get_event_bus
-            await get_event_bus(os.environ.get("REDIS_URL"))
-            self._event_bus_initialized = True
-
-        from subnet.events import emit
-        await emit("epoch.started", "validator", {
-            "epoch": self.step,
-            "challenge_uids": challenge_uids,
-            "query_text": test_query,
-        }, correlation_id=f"epoch-{self.step}")
-
         zero_vec = [0.0] * EMBEDDING_DIM
 
         # a) Corpus challenges
@@ -677,6 +663,21 @@ class LocalValidator:
             "machine learning neural networks",
         ])
         test_embedding = self.embedder.embed_one(test_query)
+
+        # Lazy event bus init + epoch.started (emitted after test_query is known)
+        if not self._event_bus_initialized:
+            import os
+
+            from subnet.events import get_event_bus
+            await get_event_bus(os.environ.get("REDIS_URL"))
+            self._event_bus_initialized = True
+
+        from subnet.events import emit
+        await emit("epoch.started", "validator", {
+            "epoch": self.step,
+            "challenge_uids": challenge_uids,
+            "query_text": test_query,
+        }, correlation_id=f"epoch-{self.step}")
 
         kq_synapse = KnowledgeQuery(
             query_text=test_query, query_embedding=test_embedding, top_k=5,
@@ -745,6 +746,16 @@ class LocalValidator:
             fairness = score_choice_fairness(offered_ids, adjacent_ids)
             quality_scores[uid] = raw_quality * fairness
 
+            await emit("validator.scoring", "validator", {
+                "epoch": self.step,
+                "uid": uid,
+                "node_id": self._uid_to_node_id.get(uid, f"node-{uid}"),
+                "traversal_score": traversal_scores[uid],
+                "quality_score": quality_scores[uid],
+                "topology_score": 0.0,
+                "corpus_score": corpus_scores.get(uid, 0.0),
+            }, correlation_id=f"epoch-{self.step}")
+
             # Reinforce edge
             dest_node_id = nh_synapse.destination_node_id
             self.graph_store.reinforce_edge(
@@ -782,6 +793,11 @@ class LocalValidator:
         self.subtensor.set_weights(
             netuid=0, uids=challenge_uids, weights=list(weight_dict.values()),
         )
+
+        await emit("validator.weights_set", "validator", {
+            "epoch": self.step,
+            "weights": weight_dict,
+        }, correlation_id=f"epoch-{self.step}")
 
         # f) Update local scores (pure Python moving average)
         alpha = 0.1
@@ -826,6 +842,12 @@ class LocalValidator:
                 corpus_scores.get(uid, 0),
                 weight_dict.get(uid, 0),
             )
+
+        await emit("epoch.completed", "validator", {
+            "epoch": self.step,
+            "miners_scored": len(challenge_uids),
+        }, correlation_id=f"epoch-{self.step}")
+
         self.step += 1
 
     def run_forever(self) -> None:

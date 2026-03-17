@@ -36,6 +36,7 @@ from subnet.config import (
     OPENROUTER_BASE_URL,
     UNBROWSE_CORPUS_THRESHOLD,
 )
+from subnet.events import emit, get_event_bus
 
 if _BT_AVAILABLE:
     from subnet.protocol import ChoiceCard, KnowledgeQuery, NarrativeHop
@@ -127,6 +128,8 @@ class Miner:
             blacklist_fn=self._blacklist_nh,
             priority_fn=self._priority_nh,
         )
+
+        self._event_bus_initialized = False
 
     # ------------------------------------------------------------------
     # Corpus loading
@@ -221,96 +224,122 @@ class Miner:
 
     async def _forward_kq(self, synapse: KnowledgeQuery) -> KnowledgeQuery:
         """Handle KnowledgeQuery -- chunk retrieval or corpus challenge."""
-        if synapse.query_text == "__corpus_challenge__":
-            if self.merkle_prover and self.chunks:
-                import random
+        import time as _time
 
-                idx = random.randrange(len(self.chunks))
-                proof = self.merkle_prover.prove(idx)
-                synapse.merkle_proof = proof
+        start = _time.monotonic()
+        if not self._event_bus_initialized:
+            await get_event_bus(_DEFAULT_REDIS_URL)
+            self._event_bus_initialized = True
+
+        await emit("miner.query_received", f"miner-{self.uid}", {
+            "uid": self.uid,
+            "node_id": self.node_id,
+            "synapse_type": "KnowledgeQuery",
+            "query_text": synapse.query_text or "",
+            "is_corpus_challenge": synapse.query_text == "__corpus_challenge__",
+        })
+
+        try:
+            if synapse.query_text == "__corpus_challenge__":
+                if self.merkle_prover and self.chunks:
+                    import random
+
+                    idx = random.randrange(len(self.chunks))
+                    proof = self.merkle_prover.prove(idx)
+                    synapse.merkle_proof = proof
+                    synapse.node_id = self.node_id
+                    synapse.agent_uid = self.uid
+                return synapse
+
+            # Semantic retrieval
+            if not self.chunks:
+                synapse.chunks = []
+                synapse.domain_similarity = 0.0
                 synapse.node_id = self.node_id
                 synapse.agent_uid = self.uid
-            return synapse
+                return synapse
 
-        # Semantic retrieval
-        if not self.chunks:
-            synapse.chunks = []
-            synapse.domain_similarity = 0.0
+            query_emb = np.array(synapse.query_embedding, dtype=np.float32)
+            if query_emb.shape[0] == 0:
+                synapse.chunks = []
+                synapse.domain_similarity = 0.0
+                synapse.node_id = self.node_id
+                synapse.agent_uid = self.uid
+                return synapse
+
+            # Score all chunks by cosine similarity
+            chunk_embs = np.array([c.embedding for c in self.chunks], dtype=np.float32)
+            scores = chunk_embs @ query_emb  # embeddings are pre-normalised
+            top_k = min(synapse.top_k, len(self.chunks))
+            top_indices = np.argpartition(scores, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+
+            synapse.chunks = [
+                {
+                    "id": self.chunks[i].id,
+                    "text": self.chunks[i].text,
+                    "hash": self.chunks[i].hash,
+                    "score": float(scores[i]),
+                    "char_start": self.chunks[i].char_start,
+                    "char_end": self.chunks[i].char_end,
+                }
+                for i in top_indices
+            ]
+
+            # Domain similarity: cosine between query and corpus centroid
+            if self.centroid:
+                centroid_vec = np.array(self.centroid, dtype=np.float32)
+                synapse.domain_similarity = float(centroid_vec @ query_emb)
+            else:
+                synapse.domain_similarity = 0.0
+
             synapse.node_id = self.node_id
             synapse.agent_uid = self.uid
-            return synapse
 
-        query_emb = np.array(synapse.query_embedding, dtype=np.float32)
-        if query_emb.shape[0] == 0:
-            synapse.chunks = []
-            synapse.domain_similarity = 0.0
-            synapse.node_id = self.node_id
-            synapse.agent_uid = self.uid
-            return synapse
-
-        # Score all chunks by cosine similarity
-        chunk_embs = np.array([c.embedding for c in self.chunks], dtype=np.float32)
-        scores = chunk_embs @ query_emb  # embeddings are pre-normalised
-        top_k = min(synapse.top_k, len(self.chunks))
-        top_indices = np.argpartition(scores, -top_k)[-top_k:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-
-        synapse.chunks = [
-            {
-                "id": self.chunks[i].id,
-                "text": self.chunks[i].text,
-                "hash": self.chunks[i].hash,
-                "score": float(scores[i]),
-                "char_start": self.chunks[i].char_start,
-                "char_end": self.chunks[i].char_end,
-            }
-            for i in top_indices
-        ]
-
-        # Domain similarity: cosine between query and corpus centroid
-        if self.centroid:
-            centroid_vec = np.array(self.centroid, dtype=np.float32)
-            synapse.domain_similarity = float(centroid_vec @ query_emb)
-        else:
-            synapse.domain_similarity = 0.0
-
-        synapse.node_id = self.node_id
-        synapse.agent_uid = self.uid
-
-        # If domain similarity is below threshold, enrich chunks with Unbrowse context
-        if (
-            synapse.query_text
-            and synapse.query_text != "__corpus_challenge__"
-            and (synapse.domain_similarity or 0.0) < UNBROWSE_CORPUS_THRESHOLD
-        ):
-            unbrowse_results = await self._unbrowse.fetch_context(
-                query=synapse.query_text,
-                node_id=self.node_id,
-                max_results=2,
-            )
-            if unbrowse_results:
-                if synapse.chunks is None:
-                    synapse.chunks = []
-                for r in unbrowse_results:
-                    synapse.chunks.append(
-                        {
-                            "id": f"unbrowse:{r.url or 'web'}",
-                            "text": r.content[:800],
-                            "hash": "",
-                            "score": r.confidence,
-                            "char_start": 0,
-                            "char_end": len(r.content),
-                            "source": "unbrowse",
-                        }
-                    )
-                log.info(
-                    "Unbrowse fallback: added %d external chunks for node %s (sim=%.3f)",
-                    len(unbrowse_results),
-                    self.node_id,
-                    synapse.domain_similarity,
+            # If domain similarity is below threshold, enrich chunks with Unbrowse context
+            if (
+                synapse.query_text
+                and synapse.query_text != "__corpus_challenge__"
+                and (synapse.domain_similarity or 0.0) < UNBROWSE_CORPUS_THRESHOLD
+            ):
+                unbrowse_results = await self._unbrowse.fetch_context(
+                    query=synapse.query_text,
+                    node_id=self.node_id,
+                    max_results=2,
                 )
+                if unbrowse_results:
+                    if synapse.chunks is None:
+                        synapse.chunks = []
+                    for r in unbrowse_results:
+                        synapse.chunks.append(
+                            {
+                                "id": f"unbrowse:{r.url or 'web'}",
+                                "text": r.content[:800],
+                                "hash": "",
+                                "score": r.confidence,
+                                "char_start": 0,
+                                "char_end": len(r.content),
+                                "source": "unbrowse",
+                            }
+                        )
+                    log.info(
+                        "Unbrowse fallback: added %d external chunks for node %s (sim=%.3f)",
+                        len(unbrowse_results),
+                        self.node_id,
+                        synapse.domain_similarity,
+                    )
 
-        return synapse
+            return synapse
+        finally:
+            elapsed_ms = (_time.monotonic() - start) * 1000
+            await emit("miner.query_completed", f"miner-{self.uid}", {
+                "uid": self.uid,
+                "node_id": self.node_id,
+                "synapse_type": "KnowledgeQuery",
+                "chunks_returned": len(synapse.chunks or []),
+                "domain_similarity": synapse.domain_similarity or 0.0,
+                "duration_ms": round(elapsed_ms, 1),
+            })
 
     async def _blacklist_kq(self, synapse: KnowledgeQuery) -> tuple[bool, str]:
         hotkey = synapse.dendrite.hotkey
@@ -336,81 +365,109 @@ class Miner:
 
     async def _forward_nh(self, synapse: NarrativeHop) -> NarrativeHop:
         """Handle NarrativeHop -- LLM-driven passage generation."""
-        # If no API key, return empty passage gracefully
-        if not _OPENROUTER_API_KEY:
-            synapse.narrative_passage = ""
-            synapse.choice_cards = []
-            synapse.knowledge_synthesis = ""
-            synapse.agent_uid = self.uid
-            return synapse
+        import time as _time
 
-        # Enrich hop generation with live external context not in the graph
-        unbrowse_context = ""
-        if synapse.destination_node_id:
-            unbrowse_results = await self._unbrowse.fetch_context(
-                query=synapse.prior_narrative or synapse.destination_node_id,
-                node_id=synapse.destination_node_id,
-                max_results=2,
+        start = _time.monotonic()
+        if not self._event_bus_initialized:
+            await get_event_bus(_DEFAULT_REDIS_URL)
+            self._event_bus_initialized = True
+
+        await emit("miner.hop_received", f"miner-{self.uid}", {
+            "uid": self.uid,
+            "node_id": self.node_id,
+            "synapse_type": "NarrativeHop",
+            "destination_node_id": synapse.destination_node_id or "",
+            "session_id": synapse.session_id or "",
+        })
+
+        try:
+            # If no API key, return empty passage gracefully
+            if not _OPENROUTER_API_KEY:
+                synapse.narrative_passage = ""
+                synapse.choice_cards = []
+                synapse.knowledge_synthesis = ""
+                synapse.agent_uid = self.uid
+                return synapse
+
+            # Enrich hop generation with live external context not in the graph
+            unbrowse_context = ""
+            if synapse.destination_node_id:
+                unbrowse_results = await self._unbrowse.fetch_context(
+                    query=synapse.prior_narrative or synapse.destination_node_id,
+                    node_id=synapse.destination_node_id,
+                    max_results=2,
+                )
+                unbrowse_context = self._unbrowse.format_for_prompt(unbrowse_results)
+
+            augmented_chunks = list(synapse.retrieved_chunks or [])
+            if unbrowse_context:
+                augmented_chunks.append(
+                    {"text": unbrowse_context, "id": "unbrowse:live", "score": 0.5}
+                )
+
+            system_prompt, user_prompt = build_prompt(
+                destination_node_id=synapse.destination_node_id,
+                player_path=synapse.player_path,
+                prior_narrative=synapse.prior_narrative,
+                retrieved_chunks=augmented_chunks,
+                persona=self.persona,
+                num_choices=3,
             )
-            unbrowse_context = self._unbrowse.format_for_prompt(unbrowse_results)
 
-        augmented_chunks = list(synapse.retrieved_chunks or [])
-        if unbrowse_context:
-            augmented_chunks.append({"text": unbrowse_context, "id": "unbrowse:live", "score": 0.5})
+            if not fits_in_context(system_prompt, user_prompt, max_tokens=8192):
+                log.warning("Prompt may exceed context window for session %s", synapse.session_id)
 
-        system_prompt, user_prompt = build_prompt(
-            destination_node_id=synapse.destination_node_id,
-            player_path=synapse.player_path,
-            prior_narrative=synapse.prior_narrative,
-            retrieved_chunks=augmented_chunks,
-            persona=self.persona,
-            num_choices=3,
-        )
+            result = await self._generate(system_prompt, user_prompt)
 
-        if not fits_in_context(system_prompt, user_prompt, max_tokens=8192):
-            log.warning("Prompt may exceed context window for session %s", synapse.session_id)
+            if result is None:
+                synapse.narrative_passage = "(generation failed)"
+                synapse.choice_cards = []
+                synapse.knowledge_synthesis = ""
+                synapse.agent_uid = self.uid
+                return synapse
 
-        result = await self._generate(system_prompt, user_prompt)
+            synapse.narrative_passage = result.get("narrative_passage", "")
+            synapse.knowledge_synthesis = result.get("knowledge_synthesis", "")
 
-        if result is None:
-            synapse.narrative_passage = "(generation failed)"
+            raw_cards = result.get("choice_cards", [])
             synapse.choice_cards = []
-            synapse.knowledge_synthesis = ""
-            synapse.agent_uid = self.uid
-            return synapse
-
-        synapse.narrative_passage = result.get("narrative_passage", "")
-        synapse.knowledge_synthesis = result.get("knowledge_synthesis", "")
-
-        raw_cards = result.get("choice_cards", [])
-        synapse.choice_cards = []
-        for card in raw_cards:
-            if isinstance(card, dict):
-                try:
-                    synapse.choice_cards.append(
-                        ChoiceCard(
-                            text=card.get("text", ""),
-                            destination_node_id=card.get("destination_node_id", ""),
-                            edge_weight_delta=float(card.get("edge_weight_delta", 0.0)),
-                            thematic_color=card.get("thematic_color", "#888888"),
+            for card in raw_cards:
+                if isinstance(card, dict):
+                    try:
+                        synapse.choice_cards.append(
+                            ChoiceCard(
+                                text=card.get("text", ""),
+                                destination_node_id=card.get("destination_node_id", ""),
+                                edge_weight_delta=float(card.get("edge_weight_delta", 0.0)),
+                                thematic_color=card.get("thematic_color", "#888888"),
+                            )
                         )
-                    )
-                except Exception as exc:
-                    log.warning("Skipping malformed choice card: %s", exc)
+                    except Exception as exc:
+                        log.warning("Skipping malformed choice card: %s", exc)
 
-        synapse.agent_uid = self.uid
+            synapse.agent_uid = self.uid
 
-        if synapse.session_id and synapse.narrative_passage:
-            task = asyncio.create_task(
-                self._update_session(synapse.session_id, synapse.narrative_passage)
-            )
-            task.add_done_callback(
-                lambda t: log.error("Session update failed: %s", t.exception())
-                if not t.cancelled() and t.exception()
-                else None
-            )
+            if synapse.session_id and synapse.narrative_passage:
+                task = asyncio.create_task(
+                    self._update_session(synapse.session_id, synapse.narrative_passage)
+                )
+                task.add_done_callback(
+                    lambda t: log.error("Session update failed: %s", t.exception())
+                    if not t.cancelled() and t.exception()
+                    else None
+                )
 
-        return synapse
+            return synapse
+        finally:
+            elapsed_ms = (_time.monotonic() - start) * 1000
+            await emit("miner.hop_completed", f"miner-{self.uid}", {
+                "uid": self.uid,
+                "node_id": self.node_id,
+                "synapse_type": "NarrativeHop",
+                "passage_length_words": len((synapse.narrative_passage or "").split()),
+                "choice_cards_count": len(synapse.choice_cards or []),
+                "duration_ms": round(elapsed_ms, 1),
+            })
 
     async def _blacklist_nh(self, synapse: NarrativeHop) -> tuple[bool, str]:
         hotkey = synapse.dendrite.hotkey

@@ -29,6 +29,7 @@ class MinimalMiner:
         # Unbrowse stub — no API key means no-op
         from orchestrator.unbrowse import UnbrowseClient
         self._unbrowse = UnbrowseClient(api_key="")
+        self._event_bus_initialized = False
 
 
 # ---------------------------------------------------------------------------

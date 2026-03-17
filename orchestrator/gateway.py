@@ -16,10 +16,14 @@ try:
 except ImportError:
     pass
 
+from dataclasses import asdict
+
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from subnet._bt_compat import _BT_AVAILABLE
 
@@ -282,6 +286,15 @@ def create_app(
         if metagraph_watcher is not None:
             await metagraph_watcher.stop()
 
+    @app.on_event("startup")
+    async def _connect_event_bus() -> None:
+        from subnet.events import emit, get_event_bus
+        await get_event_bus(_redis_url)
+        await emit("system.component_started", "gateway", {
+            "component": "gateway",
+            "mode": "production",
+        })
+
     # ------------------------------------------------------------------
     # POST /enter
     # ------------------------------------------------------------------
@@ -356,6 +369,13 @@ def create_app(
 
         await _session_store.set(session)
 
+        from subnet.events import emit as _emit
+        await _emit("session.created", "gateway", {
+            "session_id": result["session_id"],
+            "entry_node_id": entry_node_id,
+            "query_text": req.query_text,
+        })
+
         return EnterResponse(
             session_id=result["session_id"],
             current_node_id=result.get("current_node_id"),
@@ -399,6 +419,13 @@ def create_app(
         )
 
         await _session_store.set(session)
+
+        from subnet.events import emit as _emit
+        await _emit("session.hop", "gateway", {
+            "session_id": req.session_id,
+            "from_node_id": session.player_path[-2] if len(session.player_path) > 1 else "",
+            "to_node_id": req.destination_node_id,
+        }, correlation_id=req.session_id)
 
         # Run Arkhai arbiter to filter the next-hop candidate set
         raw_cards: list[dict] = result.get("choice_cards") or []
@@ -523,6 +550,61 @@ def create_app(
             "active_sessions": await _session_store.count_active(),
             "total_sessions": await _session_store.count_total(),
         }
+
+    # ------------------------------------------------------------------
+    # GET /events/stream, /events/stream/{component}, /events/recent
+    # ------------------------------------------------------------------
+
+    @app.get("/events/stream")
+    async def event_stream(request: Request, filter: str | None = None):
+        """Server-Sent Events stream of system events."""
+        from subnet.events import FIREHOSE_CHANNEL, get_event_bus
+        bus = await get_event_bus()
+        channels = [FIREHOSE_CHANNEL]
+        if filter:
+            components = [c.strip() for c in filter.split(",")]
+            channels = [f"nn:events:{c}" for c in components]
+
+        async def generate():
+            async for event in bus.subscribe(channels):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {event.to_json()}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/events/stream/{component}")
+    async def event_stream_component(request: Request, component: str):
+        """SSE stream filtered to a specific component."""
+        from subnet.events import get_event_bus
+        channel = f"nn:events:{component}"
+        bus = await get_event_bus()
+
+        async def generate():
+            async for event in bus.subscribe([channel]):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {event.to_json()}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/events/recent")
+    async def events_recent(limit: int = 50, component: str | None = None):
+        """Get recent events from the buffer."""
+        from subnet.events import get_event_bus
+        bus = await get_event_bus()
+        events = await bus.get_recent(limit=limit)
+        if component:
+            events = [e for e in events if e.source.startswith(component)]
+        return {"events": [asdict(e) for e in events]}
 
     return app
 
@@ -897,6 +979,15 @@ def create_dev_app() -> FastAPI:
     async def _connect_session_store() -> None:
         await _session_store.connect()
 
+    @app.on_event("startup")
+    async def _connect_event_bus() -> None:
+        from subnet.events import emit, get_event_bus
+        await get_event_bus(_redis_url)
+        await emit("system.component_started", "gateway", {
+            "component": "gateway",
+            "mode": "standalone",
+        })
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
@@ -952,6 +1043,13 @@ def create_dev_app() -> FastAPI:
             "player_path": [entry_node_id],
             "prior_narrative": result.get("narrative_passage", ""),
             "query_embedding": query_embedding,
+        })
+
+        from subnet.events import emit as _emit
+        await _emit("session.created", "gateway", {
+            "session_id": session_id,
+            "entry_node_id": entry_node_id,
+            "query_text": req.query_text,
         })
 
         return {
@@ -1043,6 +1141,20 @@ def create_dev_app() -> FastAPI:
             session["state"] = "terminal"
         await _session_store.set_dict(req.session_id, session)
 
+        from subnet.events import emit as _emit
+        await _emit("session.hop", "gateway", {
+            "session_id": req.session_id,
+            "from_node_id": player_path[-1] if player_path else "",
+            "to_node_id": req.destination_node_id,
+            "passage_length_words": len(passage.split()) if passage else 0,
+        }, correlation_id=req.session_id)
+        if not adjacent:
+            await _emit("session.terminal", "gateway", {
+                "session_id": req.session_id,
+                "player_path": new_path,
+                "total_hops": len(new_path) - 1,
+            }, correlation_id=req.session_id)
+
         return {
             "session_id": req.session_id,
             "current_node_id": req.destination_node_id,
@@ -1064,6 +1176,61 @@ def create_dev_app() -> FastAPI:
             "current_node_id": session["current_node_id"],
             "player_path": session["player_path"],
         }
+
+    # ------------------------------------------------------------------
+    # GET /events/stream, /events/stream/{component}, /events/recent
+    # ------------------------------------------------------------------
+
+    @app.get("/events/stream")
+    async def event_stream(request: Request, filter: str | None = None):
+        """Server-Sent Events stream of system events."""
+        from subnet.events import FIREHOSE_CHANNEL, get_event_bus
+        bus = await get_event_bus()
+        channels = [FIREHOSE_CHANNEL]
+        if filter:
+            components = [c.strip() for c in filter.split(",")]
+            channels = [f"nn:events:{c}" for c in components]
+
+        async def generate():
+            async for event in bus.subscribe(channels):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {event.to_json()}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/events/stream/{component}")
+    async def event_stream_component(request: Request, component: str):
+        """SSE stream filtered to a specific component."""
+        from subnet.events import get_event_bus
+        channel = f"nn:events:{component}"
+        bus = await get_event_bus()
+
+        async def generate():
+            async for event in bus.subscribe([channel]):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {event.to_json()}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/events/recent")
+    async def events_recent(limit: int = 50, component: str | None = None):
+        """Get recent events from the buffer."""
+        from subnet.events import get_event_bus
+        bus = await get_event_bus()
+        events = await bus.get_recent(limit=limit)
+        if component:
+            events = [e for e in events if e.source.startswith(component)]
+        return {"events": [asdict(e) for e in events]}
 
     return app
 
