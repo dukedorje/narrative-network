@@ -9,10 +9,12 @@ domain := "futograph.online"
 
 # ── Secrets ───────────────────────────────────────────────────────────
 
-# Push .env secrets to K8s (dedupes, strips comments)
+# Push .env secrets to K8s (dedupes, strips comments, filters out non-secret keys)
 secrets:
     @grep -v '^#' .env | grep -v '^\s*$' | \
+      grep -v '^GATEWAY_URL=' | grep -v '^AXON_' | \
       awk -F= '!seen[$1]++ || 1 { last[$1]=$0 } END { for (k in last) print last[k] }' > /tmp/clean.env
+    @echo "Keys to sync:" && cut -d= -f1 /tmp/clean.env | sort
     kubectl -n {{namespace}} create secret generic narrative-network-secrets \
       --from-env-file=/tmp/clean.env \
       --dry-run=client -o yaml | kubectl apply -f -

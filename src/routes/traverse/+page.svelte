@@ -49,9 +49,9 @@
 		}
 	});
 
-	// Auto-scroll narrative area to bottom when new passages arrive
+	// Auto-scroll narrative area to bottom when new passages arrive or loading starts
 	$effect(() => {
-		if (narrativeHistory.length > 0 && narrativeAreaEl) {
+		if ((narrativeHistory.length > 0 || loading) && narrativeAreaEl) {
 			requestAnimationFrame(() => {
 				narrativeAreaEl?.scrollTo({ top: narrativeAreaEl.scrollHeight, behavior: 'smooth' });
 			});
@@ -76,6 +76,7 @@
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ error: 'Gateway unavailable' }));
 				errorMessage = err.error ?? 'Failed to enter the graph';
+				sessionState = 'idle';
 				return;
 			}
 			const result = await res.json();
@@ -91,8 +92,10 @@
 			}
 		} catch {
 			errorMessage = 'Could not connect to the gateway. Is it running?';
+			sessionState = 'idle';
 		} finally {
 			loading = false;
+			pendingNodeLabel = null;
 			if (errorMessage) setTimeout(() => (errorMessage = null), 5000);
 		}
 	}
@@ -213,7 +216,12 @@
 		<section class="traverse-bar">
 			<div class="traverse-bar-inner">
 				<span class="current-node-label">
-					{currentNodeId?.replace(/-/g, ' ') ?? 'Traversing...'}
+					{#if loading && pendingNodeLabel}
+						{pendingNodeLabel}
+						<span class="node-label-generating">generating...</span>
+					{:else}
+						{currentNodeId?.replace(/-/g, ' ') ?? 'Traversing...'}
+					{/if}
 				</span>
 				<button class="reset-btn" onclick={resetSession}>New session</button>
 				<button
@@ -240,14 +248,14 @@
 					</div>
 				{/if}
 
-				{#if narrativeHistory.length === 0}
+				{#if narrativeHistory.length === 0 && !loading}
 					<p class="narrative-prompt">Entering the graph...</p>
 				{:else}
 					<div class="narrative-passages">
 						{#each narrativeHistory as passage, i (i)}
 							<p
 								class="narrative-passage"
-								class:narrative-passage--latest={i === narrativeHistory.length - 1}
+								class:narrative-passage--latest={i === narrativeHistory.length - 1 && !loading}
 								in:fly={{ y: 30, duration: 500, easing: cubicOut }}
 							>
 								{passage}
@@ -256,7 +264,22 @@
 					</div>
 				{/if}
 
-				{#if knowledgeSynthesis}
+				{#if loading}
+					<div class="narrative-generating" in:fade={{ duration: 300 }}>
+						<div class="generating-header">
+							<div class="generating-pulse"></div>
+							<span>Generating narrative{pendingNodeLabel ? ` for ${pendingNodeLabel}` : ''}...</span>
+						</div>
+						<div class="generating-skeleton">
+							<div class="skeleton-line" style="width: 92%"></div>
+							<div class="skeleton-line" style="width: 87%; animation-delay: 0.15s"></div>
+							<div class="skeleton-line" style="width: 95%; animation-delay: 0.3s"></div>
+							<div class="skeleton-line" style="width: 60%; animation-delay: 0.45s"></div>
+						</div>
+					</div>
+				{/if}
+
+				{#if knowledgeSynthesis && !loading}
 					<div class="knowledge-synthesis" in:fade={{ duration: 400, delay: 200 }}>
 						<span class="synthesis-label">Synthesis</span>
 						<p>{knowledgeSynthesis}</p>
@@ -499,6 +522,16 @@
 		font-weight: 600;
 		text-transform: capitalize;
 		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.node-label-generating {
+		font-size: 11px;
+		font-weight: 400;
+		color: #64748b;
+		animation: pulse-text 1.5s ease-in-out infinite;
 	}
 
 	.reset-btn {
@@ -598,6 +631,68 @@
 		color: #e2e8f0;
 		border-left-color: #6ee7b7;
 		background: #142035;
+	}
+
+	/* ── Narrative generating indicator ────────────────────────────── */
+	.narrative-generating {
+		margin-top: 20px;
+		padding: 20px;
+		background: #111f35;
+		border-radius: 8px;
+		border-left: 3px solid #6ee7b7;
+	}
+
+	.generating-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 16px;
+		color: #94a3b8;
+		font-size: 13px;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+	}
+
+	.generating-pulse {
+		width: 8px;
+		height: 8px;
+		background: #6ee7b7;
+		border-radius: 50%;
+		animation: pulse-dot 1.4s ease-in-out infinite;
+	}
+
+	.generating-skeleton {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.skeleton-line {
+		height: 12px;
+		background: linear-gradient(
+			90deg,
+			#1e293b 25%,
+			#253347 50%,
+			#1e293b 75%
+		);
+		background-size: 200% 100%;
+		border-radius: 6px;
+		animation: shimmer 1.5s ease-in-out infinite;
+	}
+
+	@keyframes shimmer {
+		0% { background-position: 200% 0; }
+		100% { background-position: -200% 0; }
+	}
+
+	@keyframes pulse-dot {
+		0%, 100% { opacity: 1; transform: scale(1); }
+		50% { opacity: 0.4; transform: scale(0.8); }
+	}
+
+	@keyframes pulse-text {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
 	}
 
 	.knowledge-synthesis {
