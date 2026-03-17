@@ -50,49 +50,22 @@ patches:
         name: narrative-network-ingress
   - target:
       kind: Deployment
-      name: domain-miner
+      name: miner
     patch: |
       $patch: delete
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: domain-miner
+        name: miner
   - target:
       kind: Service
-      name: domain-miner
+      name: miner
     patch: |
       $patch: delete
       apiVersion: v1
       kind: Service
       metadata:
-        name: domain-miner
-  - target:
-      kind: PersistentVolumeClaim
-      name: domain-miner-corpus
-    patch: |
-      $patch: delete
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: domain-miner-corpus
-  - target:
-      kind: Deployment
-      name: narrative-miner
-    patch: |
-      $patch: delete
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: narrative-miner
-  - target:
-      kind: Service
-      name: narrative-miner
-    patch: |
-      $patch: delete
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: narrative-miner
+        name: miner
   - target:
       kind: StatefulSet
       name: validator

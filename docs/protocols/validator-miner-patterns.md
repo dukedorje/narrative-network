@@ -202,61 +202,95 @@ def run(self):
         self.step += 1
 ```
 
-### Domain Miner (Knowledge Server)
+### Unified Miner (Knowledge + Narrative)
+
+The Narrative Network uses a unified miner that serves both KnowledgeQuery and NarrativeHop from a single axon:
 
 ```python
-class DomainMiner(BaseMinerNeuron):
+class Miner(BaseMinerNeuron):
     def __init__(self, config):
         super().__init__(config)
-        self.vector_store = ChromaStore(config.corpus_path)
-        self.merkle_tree = MerkleTree(config.corpus_path)
+        self.corpus_loader = CorpusLoader(config.corpus_path)
+        self.chunks = self.corpus_loader.load()
+        self.merkle_prover = MerkleProver(self.chunks)
+        self.session_store = SessionStore(redis_url=config.redis_url)
+        self._client = None  # lazy-init OpenRouter client
 
-    async def forward(self, synapse: KnowledgeQuery) -> KnowledgeQuery:
+    async def _forward_kq(self, synapse: KnowledgeQuery) -> KnowledgeQuery:
+        """Handle KnowledgeQuery — chunk retrieval or corpus challenge."""
         if synapse.query_text == "__corpus_challenge__":
             # Return Merkle proof for integrity check
-            synapse.merkle_proof = self.merkle_tree.get_proof()
+            idx = random.randrange(len(self.chunks))
+            proof = self.merkle_prover.prove(idx)
+            synapse.merkle_proof = proof
+            synapse.node_id = self.config.node_id
+            synapse.agent_uid = self.uid
             return synapse
 
-        # Normal knowledge retrieval
-        results = self.vector_store.query(
-            embedding=synapse.query_embedding,
-            text=synapse.query_text,
-            top_k=synapse.top_k,
-        )
-        synapse.chunks = results.chunks
-        synapse.domain_similarity = results.similarity
+        # Normal knowledge retrieval via numpy cosine similarity
+        query_emb = np.array(synapse.query_embedding, dtype=np.float32)
+        chunk_embs = np.array([c.embedding for c in self.chunks], dtype=np.float32)
+        scores = chunk_embs @ query_emb
+        top_k = min(synapse.top_k, len(self.chunks))
+        top_indices = np.argpartition(scores, -top_k)[-top_k:]
+
+        synapse.chunks = [
+            {
+                "id": self.chunks[i].id,
+                "text": self.chunks[i].text,
+                "hash": self.chunks[i].hash,
+                "score": float(scores[i]),
+            }
+            for i in top_indices
+        ]
+        synapse.domain_similarity = float(np.mean(scores[top_indices]))
         synapse.node_id = self.config.node_id
         synapse.agent_uid = self.uid
         return synapse
-```
 
-### Narrative Miner (Passage Generator)
-
-```python
-class NarrativeMiner(BaseMinerNeuron):
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = load_language_model(config.model_name)
-        self.persona = load_persona(config.persona_path)
-
-    async def forward(self, synapse: NarrativeHop) -> NarrativeHop:
+    async def _forward_nh(self, synapse: NarrativeHop) -> NarrativeHop:
+        """Handle NarrativeHop — LLM-driven passage generation."""
         # Build prompt from context
-        prompt = self.build_prompt(
-            node_id=synapse.destination_node_id,
-            path=synapse.player_path,
-            prior=synapse.prior_narrative,
-            chunks=synapse.retrieved_chunks,
-            integration_notice=synapse.integration_notice,
+        prompt = build_prompt(
+            destination_node_id=synapse.destination_node_id,
+            player_path=synapse.player_path,
+            prior_narrative=synapse.prior_narrative,
+            retrieved_chunks=synapse.retrieved_chunks,
+            persona=self.config.persona,
+            num_choices=3,
         )
 
-        # Generate passage
-        passage = self.model.generate(prompt, max_tokens=400, persona=self.persona)
+        # Generate passage via OpenRouter
+        client = self._get_client()
+        response = await client.chat.completions.create(
+            model="anthropic/claude-3.5-haiku",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content or "{}")
 
-        # Generate choice cards (adjacent nodes)
-        choices = self.generate_choices(synapse.destination_node_id, passage)
+        synapse.narrative_passage = result.get("narrative_passage", "")
+        synapse.choice_cards = result.get("choice_cards", [])
+        synapse.knowledge_synthesis = result.get("knowledge_synthesis", "")
+        synapse.agent_uid = self.uid
 
-        synapse.narrative_passage = passage
-        synapse.choice_cards = choices
+        # Update session context
+        if synapse.session_id:
+            await self.session_store.update_field(
+                synapse.session_id,
+                "history",
+                synapse.narrative_passage,
+            )
+
+        return synapse
+```
+
+**Key integration points:**
+- `_forward_kq()` handles all KnowledgeQuery requests (retrieval + Merkle proofs)
+- `_forward_nh()` handles all NarrativeHop requests (LLM generation + session persistence)
+- Single axon registration with two attached handlers maintains unified identity
+- Corpus and session state are shared between both handlers
         synapse.passage_embedding = self.embed(passage)
         synapse.agent_uid = self.uid
         return synapse

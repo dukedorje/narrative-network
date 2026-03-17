@@ -36,20 +36,20 @@ The Narrative Network is composed of six distinct layers. Traffic originates at 
                          │   router  |  rate limiter  |  Redis session cache   │
                          │                 orchestrator/gateway.py             │
                          │                 orchestrator/session.py             │
-                         └────────────┬──────────────────────┬─────────────────┘
-                                      │  Synapse: KnowledgeQuery               │  Synapse: NarrativeHop
-                                      ▼                      ▼
-             ┌────────────────────────────┐    ┌─────────────────────────────────┐
-             │     Domain Miner × N       │    │      Narrative Miner × N        │
-             │  numpy corpus search       │    │   OpenRouter API  |  Redis session store   │
-             │  corpus chunks             │    │   persona  |  path context      │
-             │  KnowledgeQuery handler    │    │   NarrativeHop handler          │
-             │  Merkle proof endpoint     │    │                                 │
-             │  domain/miner.py           │    │   (lightweight — OpenRouter, no GPU) │
-             │  domain/manifest.py        │    │                                 │
-             └────────────┬───────────────┘    └──────────────┬──────────────────┘
-                          │                                   │
-                          └──────────────┬────────────────────┘
+                         └────────────┬──────────────────────────────────┘
+                                      │  Synapse: KnowledgeQuery & NarrativeHop
+                                      ▼
+             ┌────────────────────────────────────────────────────┐
+             │           Unified Miner × N                        │
+             │  KnowledgeQuery handler:                           │
+             │    - numpy corpus search + Merkle proofs           │
+             │  NarrativeHop handler:                             │
+             │    - OpenRouter LLM + Redis session store          │
+             │    - persona + path context                        │
+             │  domain/unified_miner.py                           │
+             │  domain/manifest.py                                │
+             └────────────┬───────────────────────────────────────┘
+                          │
                                          │  Scored responses
                                          ▼
                          ┌─────────────────────────────────────────────────────┐
@@ -101,42 +101,24 @@ The Gateway is the only internet-facing component. All inter-component communica
 
 ---
 
-### 2.2 Domain Miner × N
+### 2.2 Unified Miner × N
 
-**Purpose:** Corpus retrieval and Merkle proof service. One VM per registered node ID.
+**Purpose:** Corpus retrieval + Merkle proof service + narrative generation. One VM per registered node ID.
 
 **Key responsibilities:**
 - Load domain corpus from .txt/.md files via CorpusLoader. Chunks embedded with SentenceTransformer, searched via numpy cosine similarity (no vector DB)
 - Compute and cache domain centroid embedding from corpus
 - Register domain manifest on-chain via `domain/manifest.py` (node ID, corpus CID, centroid, persona hash)
-- Handle `KnowledgeQuery` synapses: embed query, cosine-rank chunks, return top-k with similarity scores
-- Serve chunk-by-hash endpoint for validator Merkle challenges (corpus integrity proofs)
+- Handle `KnowledgeQuery` synapses: embed query, cosine-rank chunks, return top-k with similarity scores; serve Merkle proofs for corpus integrity challenges
+- Handle `NarrativeHop` synapses: call OpenRouter API with persona-specific prompts, assemble passages from retrieved chunks + path context, generate choice cards and knowledge synthesis
+- Maintain per-session narrative context via Redis session store (with in-memory fallback)
 - Maintain Merkle tree over corpus chunk hashes for fraud proofs
 
-**Modules:** `domain/miner.py`, `domain/corpus.py`, `domain/manifest.py`, `subnet/protocol.py`
+**Modules:** `domain/unified_miner.py`, `domain/corpus.py`, `domain/manifest.py`, `domain/narrative/prompt.py`, `domain/narrative/session_store.py`, `subnet/protocol.py`
 
-**Resources:** ~2 vCPU, 4 GB RAM, no GPU required
+**Resources:** ~2 vCPU, 4 GB RAM, no GPU required (OpenRouter handles LLM inference)
 
 **Scaling:** one instance per registered node ID; horizontal scale by domain coverage, not traffic volume
-
----
-
-### 2.3 Narrative Miner × N
-
-**Purpose:** Mutation generator. Produces competing narrative passages and branch choices on each traversal hop.
-
-**Key responsibilities:**
-- Call OpenRouter API (OpenAI-compatible) with persona-specific prompts. No local model hosting or GPU required.
-- Maintain per-session narrative context via Redis session store (with in-memory fallback)
-- Handle `NarrativeHop` synapses: assemble prompt from persona, traversal path, retrieved chunks, and destination domain context
-- Generate: (1) narrative passage, (2) set of branch choices pointing to adjacent live nodes, (3) knowledge synthesis embedding
-- Compete with other miners registered to the same node — the validator scores all responses comparatively
-
-**Modules:** `domain/narrative/miner.py`, `domain/narrative/prompt.py`, `domain/narrative/session_store.py`, `subnet/protocol.py`
-
-**Resources:** ~2 vCPU, 2 GB RAM; no GPU required (OpenRouter handles inference)
-
-**Note:** Domain Miner and Narrative Miner may run on the same VM for smaller operators. The split is a logical separation; the subnet protocol does not enforce physical separation.
 
 ---
 
@@ -195,10 +177,10 @@ Gateway VM  (orchestrator/gateway.py)
   │  3. Cosine-rank all registered node centroids
   │  4. Broadcast KnowledgeQuery synapse to ALL miners (timeout=3s)
   │
-  ├──► Domain Miner A  (domain/miner.py)
+  ├──► Miner A  (domain/unified_miner.py, KnowledgeQuery handler)
   │      embed query, score vs. corpus, return top-k chunks + similarity
-  ├──► Domain Miner B  ...
-  └──► Domain Miner N  ...
+  ├──► Miner B  ...
+  └──► Miner N  ...
   │
   │  5. Collect responses (drop timeouts)
   │  6. Select top-scoring miner's node_id as entry point
@@ -211,9 +193,9 @@ Gateway VM  (orchestrator/gateway.py)
   │  9. Look up destination node's registered miners from metagraph
   │ 10. Broadcast NarrativeHop synapse to miners on destination_node (timeout=5s)
   │
-  ├──► Narrative Miner X  (NarrativeHop handler)
+  ├──► Miner X  (domain/unified_miner.py, NarrativeHop handler)
   │      load lore context, assemble prompt, generate passage + branches
-  ├──► Narrative Miner Y  ...
+  ├──► Miner Y  ...
   │
   │ 11. Collect responses, rank by coherence score (embedding continuity)
   │ 12. Select highest-coherence passage
@@ -653,15 +635,14 @@ A rolling attestation window in `subnet/validator.py` detects sustained quality 
 | `orchestrator/gateway.py` | Gateway | FastAPI application, synapse dispatch, response selection, streaming |
 | `orchestrator/session.py` | Gateway | Session record creation, Redis I/O, continuity invariant enforcement |
 | `evolution/proposal.py` | Validator | Node proposal, voting, incubation, integration, and pruning state machine |
-| `domain/miner.py` | Domain Miner | Corpus loader, numpy search, Merkle proofs, `KnowledgeQuery` handler, chunk-by-hash endpoint |
-| `domain/corpus.py` | Domain Miner | CorpusLoader, MerkleProver, chunk embedding and Merkle tree |
-| `domain/manifest.py` | Domain Miner | `DomainManifest` dataclass, IPFS publish, Merkle tree construction |
-| `domain/narrative/miner.py` | Narrative Miner | OpenRouter-backed hop generation, session persistence |
-| `domain/narrative/prompt.py` | Narrative Miner | Persona catalogue, prompt assembly for hop generation |
-| `domain/narrative/session_store.py` | Narrative Miner | Redis session store with in-memory fallback |
+| `domain/unified_miner.py` | Unified Miner | Corpus loader, KnowledgeQuery handler, NarrativeHop handler, OpenRouter-backed hop generation, session persistence |
+| `domain/corpus.py` | Unified Miner | CorpusLoader, MerkleProver, chunk embedding and Merkle tree |
+| `domain/manifest.py` | Unified Miner | `DomainManifest` dataclass, IPFS publish, Merkle tree construction |
+| `domain/narrative/prompt.py` | Unified Miner | Persona catalogue, prompt assembly for hop generation |
+| `domain/narrative/session_store.py` | Unified Miner | Redis session store with in-memory fallback |
 | `subnet/emissions.py` | Validator | Three emission pools, EmissionCalculator, weight vector computation |
 | `subnet/metagraph_watcher.py` | Validator, Gateway | Async metagraph poller, AxonCache, registration events |
-| `orchestrator/router.py` | Gateway | Entry-node ranking, narrative miner resolution |
+| `orchestrator/router.py` | Gateway | Entry-node ranking, miner resolution |
 | `orchestrator/embedder.py` | Gateway | SentenceTransformer wrapper for query/passage embedding |
 | `orchestrator/safety_guard.py` | Gateway | Path cycle prevention, word count enforcement |
 | `evolution/voting.py` | Validator | Stake-weighted voting engine, quorum/approval tally |

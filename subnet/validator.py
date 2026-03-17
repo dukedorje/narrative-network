@@ -28,7 +28,16 @@ from subnet.config import (
     EMBEDDING_MODEL,
     EPOCH_SLEEP_S,
     MOVING_AVERAGE_ALPHA,
+    NODE_REGISTRATION_ENABLED,
+    PRUNING_ENABLED,
+    PRUNING_EPOCH_INTERVAL,
 )
+
+try:
+    from evolution.pruning import EpochScore, PruningEngine
+except ImportError:
+    PruningEngine = None  # type: ignore
+    EpochScore = None  # type: ignore
 
 if _BT_AVAILABLE:
     from subnet.protocol import KnowledgeQuery, NarrativeHop, WeightCommit
@@ -93,6 +102,12 @@ class Validator:
         else:
             from orchestrator.embedder import Embedder
             self.embedder = Embedder(model_name=EMBEDDING_MODEL)
+
+        # uid -> graph node_id mapping, populated from manifest registration
+        self._uid_to_node_id: dict[int, str] = {}
+
+        # Pruning engine (nla_client=None — NLA settlement not yet wired)
+        self.pruning_engine = PruningEngine(nla_client=None) if PruningEngine is not None else None
 
         # Curated challenge queries covering diverse knowledge domains
         self._challenge_queries = [
@@ -173,6 +188,16 @@ class Validator:
         import time as _time
 
         self.resync_metagraph()
+
+        # Register nodes from miner manifests
+        if NODE_REGISTRATION_ENABLED:
+            serving_uids_pre = [
+                uid for uid in range(len(self.metagraph.hotkeys))
+                if uid != self.uid
+                and hasattr(self.metagraph.axons[uid], "is_serving")
+                and self.metagraph.axons[uid].is_serving
+            ]
+            self._register_manifests(serving_uids_pre)
 
         # a) Select UIDs to challenge — miners with serving axons
         serving_uids = [
@@ -283,7 +308,7 @@ class Validator:
             process_time = _time.monotonic() - start_time
 
             nh_synapse = NarrativeHop(
-                destination_node_id=kq_resp.node_id or f"node-{uid}",
+                destination_node_id=kq_resp.node_id or self._uid_to_node_id.get(uid, f"node-{uid}"),
                 player_path=[],
                 retrieved_chunks=kq_resp.chunks or [],
                 session_id=f"epoch-{self.step}-uid-{uid}",
@@ -344,7 +369,7 @@ class Validator:
         # d) Topology scoring from graph store
         topology_scores: dict[int, float] = {}
         for uid in challenge_uids:
-            node_id = f"node-{uid}"
+            node_id = self._uid_to_node_id.get(uid, f"node-{uid}")
             bc = self.graph_store.betweenness_centrality(node_id)
             ew = self.graph_store.outgoing_edge_weight_sum(node_id)
             topology_scores[uid] = score_topology(
@@ -379,10 +404,73 @@ class Validator:
         # Decay edges
         self.graph_store.decay_edges()
 
+        # Feed scores to pruning engine and run periodic pruning
+        if PRUNING_ENABLED and self.pruning_engine is not None:
+            epoch_scores: dict[str, EpochScore] = {}
+            for uid in challenge_uids:
+                node_id = self._uid_to_node_id.get(uid, f"node-{uid}")
+                epoch_scores[node_id] = EpochScore(
+                    epoch=self.step,
+                    node_id=node_id,
+                    score=quality_scores.get(uid, 0.0),
+                    traversal_count=1,
+                )
+            self.pruning_engine.push_scores(self.step, epoch_scores)
+
+            if self.step % PRUNING_EPOCH_INTERVAL == 0:
+                collapses = self.pruning_engine.process_epoch(self.step)
+                for collapse in collapses:
+                    self.graph_store.set_node_state(collapse.node_id, "Pruned")
+                    _log.warning("Node %s pruned: %s", collapse.node_id, collapse.reason)
+
+        # FUTURE: Comparative attestation -- head-to-head miner comparison scoring
+        # FUTURE: LLM adversarial controls -- detect and penalize gaming of narrative quality
+
         _log.info(
             f"Epoch {self.step}: scored {len(challenge_uids)} miners, weights set, edges decayed"
         )
         self.step += 1
+
+    def _register_manifests(self, serving_uids: list[int]) -> None:
+        """Check serving miners for manifest commitments and register new nodes."""
+        from domain.manifest import ManifestStore
+
+        manifest_store = ManifestStore()
+
+        for uid in serving_uids:
+            # Skip if already mapped
+            if uid in self._uid_to_node_id:
+                continue
+
+            try:
+                manifest_cid = self.subtensor.get_commitment(NETUID, uid)
+            except Exception:
+                continue
+
+            if not manifest_cid:
+                continue
+
+            manifest = manifest_store.load(manifest_cid)
+            if manifest is None:
+                _log.debug("Manifest CID %s for UID %d not found locally", manifest_cid[:16], uid)
+                continue
+
+            node_id = manifest.node_id
+            self._uid_to_node_id[uid] = node_id
+
+            # Register in graph store if new
+            existing = self.graph_store.get_node(node_id)
+            if existing is None:
+                self.graph_store.add_node(
+                    node_id, state="Live",
+                    metadata={"miner_uid": uid, "miner_hotkey": manifest.miner_hotkey},
+                )
+                if self.pruning_engine is not None:
+                    self.pruning_engine.register_node(node_id)
+                _log.info(
+                    "Registered node %s for UID %d from manifest %s",
+                    node_id, uid, manifest_cid[:16],
+                )
 
     def run_forever(self) -> None:
         import asyncio
@@ -391,7 +479,7 @@ class Validator:
         _log.info("Validator starting run_forever loop")
         while True:
             try:
-                asyncio.get_event_loop().run_until_complete(self.run_epoch())
+                asyncio.run(self.run_epoch())
             except Exception as e:
                 _log.error(f"Epoch failed: {e}")
             time.sleep(EPOCH_SLEEP_S)
@@ -428,6 +516,12 @@ class LocalValidator:
 
         self.scores = [0.0] * len(self.metagraph.hotkeys)
         self.step = 0
+
+        # uid -> graph node_id mapping (local mode: no manifest registration)
+        self._uid_to_node_id: dict[int, str] = {}
+
+        # Pruning engine (nla_client=None — NLA settlement not yet wired)
+        self.pruning_engine = PruningEngine(nla_client=None) if PruningEngine is not None else None
 
         self.log.info(
             "Local validator ready: %d nodes, real scoring via reward.py",
@@ -522,7 +616,7 @@ class LocalValidator:
 
             # Fire narrative hop
             nh_synapse = NarrativeHop(
-                destination_node_id=kq_resp.node_id or f"node-{uid}",
+                destination_node_id=kq_resp.node_id or self._uid_to_node_id.get(uid, f"node-{uid}"),
                 player_path=[],
                 retrieved_chunks=kq_resp.chunks or [],
                 session_id=f"epoch-{self.step}-uid-{uid}",
@@ -565,7 +659,7 @@ class LocalValidator:
         # c) Topology scoring
         topology_scores: dict[int, float] = {}
         for uid in challenge_uids:
-            node_id = f"node-{uid}"
+            node_id = self._uid_to_node_id.get(uid, f"node-{uid}")
             bc = self.graph_store.betweenness_centrality(node_id)
             ew = self.graph_store.outgoing_edge_weight_sum(node_id)
             topology_scores[uid] = score_topology(
@@ -602,6 +696,26 @@ class LocalValidator:
 
         # Decay edges
         self.graph_store.decay_edges()
+
+        # Feed scores to pruning engine and run periodic pruning
+        # Local mode: no manifest registration (no subtensor)
+        if PRUNING_ENABLED and self.pruning_engine is not None:
+            epoch_scores_local: dict[str, EpochScore] = {}
+            for uid in challenge_uids:
+                node_id = self._uid_to_node_id.get(uid, f"node-{uid}")
+                epoch_scores_local[node_id] = EpochScore(
+                    epoch=self.step,
+                    node_id=node_id,
+                    score=quality_scores.get(uid, 0.0),
+                    traversal_count=1,
+                )
+            self.pruning_engine.push_scores(self.step, epoch_scores_local)
+
+            if self.step % PRUNING_EPOCH_INTERVAL == 0:
+                collapses = self.pruning_engine.process_epoch(self.step)
+                for collapse in collapses:
+                    self.graph_store.set_node_state(collapse.node_id, "Pruned")
+                    self.log.warning("Node %s pruned: %s", collapse.node_id, collapse.reason)
 
         self.log.info(
             "Epoch %d: scored %d miners via real reward.py pipeline",

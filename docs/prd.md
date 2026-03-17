@@ -90,8 +90,7 @@ Acceptance criteria:
 | Component | Role | Resources | Key Module |
 |-----------|------|-----------|------------|
 | Gateway VM | Internet-facing API, session ownership | FastAPI + sentence-transformers | `orchestrator/gateway.py` |
-| Domain Miner | Corpus retrieval, Merkle proofs | ~2 vCPU, 4GB RAM | `domain/miner.py`, `domain/corpus.py` |
-| Narrative Miner | Passage authoring, choice cards | ~2 vCPU, 4GB RAM (OpenRouter, no GPU) | `domain/narrative/miner.py` |
+| Unified Miner | Corpus retrieval + Merkle proofs + passage authoring | ~2 vCPU, 4GB RAM (OpenRouter, no GPU) | `domain/unified_miner.py`, `domain/corpus.py` |
 | Validator | Scoring, weight commit, graph maintenance | ~8 vCPU, 32GB | `subnet/validator.py` |
 | Graph Store | Edge weights, centrality, traversal logs | KuzuDB + in-memory | `subnet/graph_store.py` |
 | Subtensor | UID registry, stake, emission | Bittensor chain | finney / local testnet |
@@ -108,8 +107,8 @@ Three message types (see `subnet/protocol.py`):
 
 ```
 User (soul token) → Gateway (embed, route) → KnowledgeQuery (broadcast)
-  → Domain Miners (top-k chunks) → Gateway (select entry node)
-  → NarrativeHop (to destination miners) → Narrative Miners (passage + choices)
+  → Miners (top-k chunks, KnowledgeQuery handlers) → Gateway (select entry node)
+  → NarrativeHop (to destination miners) → Miners (passage + choices, NarrativeHop handlers)
   → Gateway (select winner, stream to user)
 
 Validator (per epoch):

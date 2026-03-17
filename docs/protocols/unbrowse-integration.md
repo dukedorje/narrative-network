@@ -11,11 +11,11 @@ The `orchestrator/unbrowse.py` module provides an async HTTP client (`UnbrowseCl
 
 ## Integration points
 
-### Domain Miner (`domain/miner.py`)
-When `domain_similarity < UNBROWSE_CORPUS_THRESHOLD` (default 0.35), the miner fetches 2 web context chunks via Unbrowse and appends them to `synapse.chunks`. This supplements sparse corpora with live web data without requiring a full corpus rebuild.
+### Unified Miner (`domain/unified_miner.py`)
 
-### Narrative Miner (`domain/narrative/miner.py`)
-Before generating hop text, the miner fetches up to 2 Unbrowse context snippets scoped to `destination_node_id`. Results are injected as a synthetic retrieved chunk so the LLM has real-world grounding for narrative generation.
+**KnowledgeQuery handler:** When `domain_similarity < UNBROWSE_CORPUS_THRESHOLD` (default 0.35), the miner fetches 2 web context chunks via Unbrowse and appends them to `synapse.chunks`. This supplements sparse corpora with live web data without requiring a full corpus rebuild.
+
+**NarrativeHop handler:** Before generating hop text, the miner fetches up to 2 Unbrowse context snippets scoped to `destination_node_id`. Results are injected as a synthetic retrieved chunk so the LLM has real-world grounding for narrative generation.
 
 ### Integration Manager (`evolution/integration.py`)
 On `IntegrationManager.enqueue` (FORESHADOW phase), a fire-and-forget prefetch fetches external context for the new node's domain. This pre-seeds miner operators with relevant web content before the node goes BRIDGE.

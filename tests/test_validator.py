@@ -1,11 +1,12 @@
 """Unit tests for subnet.validator.Validator using mock dependencies."""
 
 import pytest
-import torch
 
-from subnet.protocol import KnowledgeQuery, NarrativeHop
-from subnet.validator import Validator
-from tests.conftest import FakeEmbedder
+torch = pytest.importorskip("torch", reason="torch required for validator tests")
+
+from subnet.protocol import KnowledgeQuery, NarrativeHop  # noqa: E402
+from subnet.validator import Validator  # noqa: E402
+from tests.conftest import FakeEmbedder  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers — register standard handlers on mock_dendrite

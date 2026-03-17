@@ -41,15 +41,13 @@ spec:
               memory: "128Mi"
               cpu: "200m"
           livenessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: axon
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: axon
             initialDelaySeconds: 15
             periodSeconds: 15

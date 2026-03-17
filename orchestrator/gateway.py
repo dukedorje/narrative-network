@@ -411,7 +411,11 @@ def create_app(
             }
             arbiter_result = await _arbiter.check_hop(
                 session_id=req.session_id,
-                source_node=session.player_path[-2] if len(session.player_path) > 1 else req.destination_node_id,
+                source_node=(
+                    session.player_path[-2]
+                    if len(session.player_path) > 1
+                    else req.destination_node_id
+                ),
                 dest_node=req.destination_node_id,
                 player_path=list(session.player_path),
                 candidates=candidates,
@@ -585,7 +589,10 @@ class _LocalMinerPool:
                             cached = pickle.load(f)
                         self._node_chunks[node_id] = cached["chunks"]
                         self._centroids[node_id] = cached["centroid"]
-                        log.debug("Cache hit for node %s (%d chunks)", node_id, len(cached["chunks"]))
+                        log.debug(
+                            "Cache hit for node %s (%d chunks)",
+                            node_id, len(cached["chunks"]),
+                        )
                         continue
                     except Exception as exc:
                         log.warning("Cache load failed for %s: %s", node_id, exc)
@@ -734,7 +741,10 @@ class _LocalNarrator:
 
         client = self._get_client()
         try:
-            log.info("Narrator: calling model=%s max_tokens=%d for node %s", self._model, self._max_tokens, destination_node_id)
+            log.info(
+                "Narrator: calling model=%s max_tokens=%d for node %s",
+                self._model, self._max_tokens, destination_node_id,
+            )
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -747,15 +757,27 @@ class _LocalNarrator:
             )
             raw = response.choices[0].message.content or ""
             if not raw:
-                log.warning("Narrator: model %s returned empty content (finish_reason=%s, routed_model=%s)",
-                            self._model, response.choices[0].finish_reason, getattr(response, 'model', 'unknown'))
+                log.warning(
+                    "Narrator: model %s returned empty content "
+                    "(finish_reason=%s, routed_model=%s)",
+                    self._model,
+                    response.choices[0].finish_reason,
+                    getattr(response, "model", "unknown"),
+                )
                 return self._placeholder(destination_node_id, adjacent_nodes or [])
             result = json.loads(raw)
-            log.info("LLM generated passage for %s (%d chars, model=%s)", destination_node_id,
-                     len(result.get("narrative_passage", "")), getattr(response, 'model', self._model))
+            log.info(
+                "LLM generated passage for %s (%d chars, model=%s)",
+                destination_node_id,
+                len(result.get("narrative_passage", "")),
+                getattr(response, "model", self._model),
+            )
             return result
         except json.JSONDecodeError as exc:
-            log.warning("Narrator: JSON parse error: %s (raw=%r)", exc, raw[:200] if raw else "empty")
+            log.warning(
+                "Narrator: JSON parse error: %s (raw=%r)",
+                exc, raw[:200] if raw else "empty",
+            )
             return self._placeholder(destination_node_id, adjacent_nodes or [])
         except Exception as exc:
             log.error("Narrator: generation error: %s", exc)
@@ -1003,7 +1025,10 @@ def create_dev_app() -> FastAPI:
                 node_descriptions=node_descriptions,
             )
             approved = set(arbiter_result.filtered_candidates)
-            choice_cards = [c for c in raw_cards if c["destination_node_id"] in approved] or raw_cards
+            choice_cards = (
+                [c for c in raw_cards if c["destination_node_id"] in approved]
+                or raw_cards
+            )
         else:
             choice_cards = raw_cards
 
@@ -1063,7 +1088,7 @@ def main() -> None:
             reload=False,
         )
     else:
-        from subnet import NETUID as _netuid
+        from subnet import NETUID as _netuid  # noqa: N811
 
         config = bt.Config()
         wallet = bt.Wallet(config=config)

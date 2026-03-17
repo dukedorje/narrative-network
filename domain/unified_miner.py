@@ -152,6 +152,14 @@ class Miner:
             self.corpus_root_hash[:16],
         )
 
+    # FUTURE: Knowledge Sync
+    # Miners can share new knowledge with nearby nodes (by centroid distance).
+    # - Periodic sync: every N epochs, query nearby miners for new chunks
+    # - Gate: reject chunks where cosine_distance(source_centroid, target_centroid)
+    #         > DRIFT_MAX_COSINE_DISTANCE
+    # - Unbrowse integration: use UnbrowseClient.fetch_context to enrich shared knowledge
+    # - Wire into: Miner._forward_kq as an additional chunk source
+
     # ------------------------------------------------------------------
     # OpenRouter client (lazy)
     # ------------------------------------------------------------------
@@ -393,7 +401,14 @@ class Miner:
         synapse.agent_uid = self.uid
 
         if synapse.session_id and synapse.narrative_passage:
-            asyncio.create_task(self._update_session(synapse.session_id, synapse.narrative_passage))
+            task = asyncio.create_task(
+                self._update_session(synapse.session_id, synapse.narrative_passage)
+            )
+            task.add_done_callback(
+                lambda t: log.error("Session update failed: %s", t.exception())
+                if not t.cancelled() and t.exception()
+                else None
+            )
 
         return synapse
 
@@ -429,7 +444,7 @@ class Miner:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        asyncio.get_event_loop().run_until_complete(self.session_store.connect())
+        asyncio.run(self.session_store.connect())
         self.axon.serve(netuid=NETUID, subtensor=self.subtensor)
         self.axon.start()
         log.info(
@@ -441,7 +456,7 @@ class Miner:
 
     def stop(self) -> None:
         self.axon.stop()
-        asyncio.get_event_loop().run_until_complete(self.session_store.close())
+        asyncio.run(self.session_store.close())
         log.info("Unified miner stopped")
 
     def run_forever(self) -> None:
@@ -519,9 +534,14 @@ class LocalMiner:
             self.log.info("Local unified miner stopped")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for the narrative-miner console script."""
     if os.environ.get("AXON_NETWORK") == "local":
-        miner: Miner | LocalMiner = LocalMiner()
+        m: Miner | LocalMiner = LocalMiner()
     else:
-        miner = Miner()
-    miner.run_forever()
+        m = Miner()
+    m.run_forever()
+
+
+if __name__ == "__main__":
+    main()

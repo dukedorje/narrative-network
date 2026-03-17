@@ -34,7 +34,7 @@ sync:
     rsync -avz --delete \
       --exclude='node_modules' --exclude='.git' --exclude='docs/corpora/.cache' \
       --exclude='.env' --exclude='__pycache__' --exclude='.playwright-mcp' \
-      --exclude='.omc' --exclude='test-results' \
+      --exclude='.omc' --exclude='test-results' --exclude='.venv' \
       . {{server}}:~/narrative-network/
 
 # Build frontend image on server
@@ -74,17 +74,16 @@ restart-python service:
 deploy-all: sync _build-all _import-all apply _restart-all
     @echo "✓ All services deployed."
 
-# Build all images on server in parallel
+# Build all images on server (sequential — parallel docker builds contend on build context)
 _build-all:
     #!/usr/bin/env bash
     set -e
-    echo "Building all images in parallel on {{server}}..."
+    echo "Building all images on {{server}}..."
     ssh {{server}} "cd ~/narrative-network && \
-        docker build --no-cache -f Dockerfile.python --target gateway -t narrative-network-gateway:latest . & \
-        docker build --no-cache -f Dockerfile.python --target validator -t narrative-network-validator:latest . & \
-        docker build --no-cache -f Dockerfile.python --target miner -t narrative-network-miner:latest . & \
-        docker build --no-cache -f Dockerfile.frontend -t narrative-network-frontend:latest . & \
-        wait"
+        docker build --no-cache -f Dockerfile.python --target gateway -t narrative-network-gateway:latest . && \
+        docker build --no-cache -f Dockerfile.python --target validator -t narrative-network-validator:latest . && \
+        docker build --no-cache -f Dockerfile.python --target miner -t narrative-network-miner:latest . && \
+        docker build --no-cache -f Dockerfile.frontend -t narrative-network-frontend:latest ."
     echo "All images built."
 
 # Import all images into k3s

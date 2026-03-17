@@ -34,13 +34,13 @@ Complete terminology reference for the Narrative Network Bittensor subnet.
 
 - **Synapse** — Wire protocol message transmitted over Bittensor axon/dendrite transport. Two types: `KnowledgeQuery` and `NarrativeHop`. (`subnet/protocol.py`)
 
-- **KnowledgeQuery** — Synapse from orchestrator/validator → domain miners. Retrieves top-k corpus chunks with Merkle proofs. Used for entry-point resolution, chunk retrieval during hops, and corpus integrity challenges. (`subnet/protocol.py`, `domain/miner.py`)
+- **KnowledgeQuery** — Synapse from orchestrator/validator → miners. Retrieves top-k corpus chunks with Merkle proofs. Used for entry-point resolution, chunk retrieval during hops, and corpus integrity challenges. (`subnet/protocol.py`, `domain/unified_miner.py`)
 
-- **NarrativeHop** — Core game-loop synapse fired each time a player selects a choice card. Request includes destination, player path, prior narrative, retrieved chunks. Response includes narrative passage, choice cards, knowledge synthesis. (`subnet/protocol.py`, `domain/narrative/miner.py`)
+- **NarrativeHop** — Core game-loop synapse fired each time a player selects a choice card. Request includes destination, player path, prior narrative, retrieved chunks. Response includes narrative passage, choice cards, knowledge synthesis. (`subnet/protocol.py`, `domain/unified_miner.py`)
 
 - **Dendrite** — Outbound RPC client (orchestrator/validator calls miners). (`orchestrator/session.py`)
 
-- **Axon** — Inbound server (miners listen for synapse requests). (`domain/miner.py`)
+- **Axon** — Inbound server (miners listen for synapse requests). (`domain/unified_miner.py`)
 
 - **Metagraph** — Bittensor's view of subnet registrations: UIDs, stake, axon info. Polled by `MetagraphWatcher` to detect registrations/deregistrations. (`subnet/metagraph_watcher.py`)
 
@@ -174,9 +174,21 @@ DRAFT → SUBMITTED → VOTING → ACCEPTED → INTEGRATING → LIVE → BOND_RE
 
 ---
 
-## Domain Miners & Corpus
+## Unified Miner
 
-- **DomainMiner** — Bittensor miner serving `KnowledgeQuery` requests. Loads corpus, embeds chunks, responds with Merkle proofs. (`domain/miner.py`)
+- **Miner** — Unified Bittensor miner serving both `KnowledgeQuery` (corpus retrieval via numpy + Merkle proofs) and `NarrativeHop` (LLM-driven passage generation via OpenRouter) from a single axon. (`domain/unified_miner.py`)
+
+- **Corpus** — Collection of text documents chunked with overlap, embedded via sentence-transformers, stored in-memory as numpy arrays. No vector DB. (`domain/corpus.py`)
+
+- **CorpusLoader** — Loads `.txt`/`.md` from a directory, chunks with overlap, embeds, pickle-caches. (`domain/corpus.py`)
+
+- **Chunk** — Contiguous text segment from corpus. Fields: id, source_id, text, SHA-256 hash, 768-dim embedding, char_start, char_end. (`domain/corpus.py`)
+
+- **MerkleProver** — Constructs SHA-256 binary Merkle tree over chunk hashes. Methods: `root()`, `prove(chunk_index)`, `verify(proof, expected_root)`. (`domain/corpus.py`)
+
+- **Merkle Root** — SHA-256 root of the binary Merkle tree over all chunk hashes. Committed on-chain via `subtensor.set_commitment()`. (`domain/corpus.py`, `domain/manifest.py`)
+
+- **Merkle Proof** — Cryptographic proof that a chunk belongs to a corpus (identified by Merkle root). Returned in `KnowledgeQuery` responses; validated by validator and gateway. (`domain/corpus.py`, `subnet/protocol.py`)
 
 - **Corpus** — Collection of text documents chunked with overlap, embedded via sentence-transformers, stored in-memory as numpy arrays. No vector DB. (`domain/corpus.py`)
 
@@ -200,11 +212,9 @@ DRAFT → SUBMITTED → VOTING → ACCEPTED → INTEGRATING → LIVE → BOND_RE
 
 ---
 
-## Narrative Miners
+## Narrative Generation
 
-- **NarrativeMiner** — Bittensor miner serving `NarrativeHop` requests. Generates narrative passages via OpenRouter LLM API. Maintains Redis-backed session context. (`domain/narrative/miner.py`)
-
-- **Narrative Passage** — LLM-generated text describing a hop (100–500 words, second-person present tense). (`domain/narrative/miner.py`, `subnet/config.py`)
+- **Narrative Passage** — LLM-generated text describing a hop (100–500 words, second-person present tense). (`domain/unified_miner.py`, `subnet/config.py`)
 
 - **Passage Embedding** — 768-dim embedding of the narrative passage. Used in coherence and groundedness scoring. (`subnet/protocol.py`, `subnet/reward.py`)
 
@@ -214,7 +224,7 @@ DRAFT → SUBMITTED → VOTING → ACCEPTED → INTEGRATING → LIVE → BOND_RE
 
 - **Session Store** — Redis-backed (with in-memory fallback) storage for session context across hops: player_path, path_embeddings, prior_narrative. (`domain/narrative/session_store.py`)
 
-- **OpenRouter** — OpenAI-compatible LLM API provider for narrative generation. Default model: `anthropic/claude-3.5-haiku`. Set via `OPENROUTER_API_KEY`. (`domain/narrative/miner.py`, `subnet/config.py`)
+- **OpenRouter** — OpenAI-compatible LLM API provider for narrative generation. Default model: `anthropic/claude-3.5-haiku`. Set via `OPENROUTER_API_KEY`. (`domain/unified_miner.py`, `subnet/config.py`)
 
 ---
 
@@ -306,8 +316,7 @@ DRAFT → SUBMITTED → VOTING → ACCEPTED → INTEGRATING → LIVE → BOND_RE
 
 - **Gateway** — HPA (2–5 replicas). FastAPI orchestrator deployment. (`k8s/`)
 - **Validator** — StatefulSet + PVC. Runs scoring and weight-setting. (`k8s/`)
-- **Domain Miner** — Deployment serving KnowledgeQuery. (`k8s/`)
-- **Narrative Miner** — Deployment serving NarrativeHop. (`k8s/`)
+- **Miner** — Deployment serving KnowledgeQuery and NarrativeHop from unified miner. (`k8s/`)
 - **Frontend** — SvelteKit web app deployment. (`k8s/`)
 - **Redis** — Session store backend. (`k8s/`)
 - **IPFS** — Manifest and centroid embedding storage. (`k8s/`)

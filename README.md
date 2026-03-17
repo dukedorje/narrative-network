@@ -59,8 +59,7 @@ Corpus integrity is a **binary gate** — a zero corpus score collapses the mine
 | Component | Role | Key Module |
 |-----------|------|------------|
 | Gateway | Internet-facing API, session lifecycle, embedding | `orchestrator/gateway.py` |
-| Domain Miner | Corpus chunk retrieval via numpy cosine similarity + Merkle proofs | `domain/miner.py` |
-| Narrative Miner | LLM passage authoring via OpenRouter, Redis-backed session context | `domain/narrative/miner.py` |
+| Miner | Unified corpus retrieval + Merkle proofs + LLM narrative authoring via OpenRouter | `domain/unified_miner.py` |
 | Validator | Four-axis scoring, weight commit via Yuma Consensus | `subnet/validator.py` |
 | Graph Store | Edge weights, centrality, decay, traversal logs (KuzuDB embedded) | `subnet/graph_store.py` |
 | Emission Calculator | Three-pool weight vector generation | `subnet/emissions.py` |
