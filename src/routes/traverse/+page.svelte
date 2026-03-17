@@ -3,6 +3,8 @@
 	import { cubicOut } from 'svelte/easing';
 	import TraverseGraph from '$lib/components/traverse/TraverseGraph.svelte';
 	import InnerViewPanel from '$lib/components/traverse/InnerViewPanel.svelte';
+	import ContextCard from '$lib/components/ui/ContextCard.svelte';
+	import ChoiceCard from '$lib/components/ui/ChoiceCard.svelte';
 
 	let { data } = $props();
 
@@ -23,6 +25,7 @@
 	let loading = $state(false);
 	let hopData = $state<any>(null);
 	let innerViewOpen = $state(false);
+	let graphSideOpen = $state(false);
 	let errorMessage = $state<string | null>(null);
 	let narrativeHistory = $state<string[]>([]);
 	let narrativeAreaEl = $state<HTMLElement | null>(null);
@@ -186,6 +189,14 @@
 				<button class="reset-btn" onclick={resetSession}>New session</button>
 				<button
 					class="observer-toggle"
+					class:active={graphSideOpen}
+					onclick={() => (graphSideOpen = !graphSideOpen)}
+				>
+					<span class="observer-icon">&#x25C8;</span>
+					Network Graph
+				</button>
+				<button
+					class="observer-toggle"
 					class:active={innerViewOpen}
 					onclick={() => (innerViewOpen = !innerViewOpen)}
 				>
@@ -199,79 +210,61 @@
 			<div class="error-banner">{errorMessage}</div>
 		{/if}
 
-		<section class="traverse-panel">
-			<!-- Narrative area (left) -->
-			<div class="narrative-area" bind:this={narrativeAreaEl}>
-				{#if playerPath.length > 0}
-					<div class="path-breadcrumb">
-						{playerPath.map(p => p.replace(/-/g, ' ')).join(' \u2192 ')}
-					</div>
-				{/if}
-
-				{#if narrativeHistory.length === 0}
-					<p class="narrative-prompt">Entering the graph...</p>
-				{:else}
-					<div class="narrative-passages">
-						{#each narrativeHistory as passage, i (i)}
-							<p
-								class="narrative-passage"
-								class:narrative-passage--latest={i === narrativeHistory.length - 1}
-								in:fly={{ y: 30, duration: 500, easing: cubicOut }}
-							>
-								{passage}
-							</p>
-						{/each}
-					</div>
-				{/if}
-
-				{#if knowledgeSynthesis}
-					<div class="knowledge-synthesis" in:fade={{ duration: 400, delay: 200 }}>
-						<span class="synthesis-label">Synthesis</span>
-						<p>{knowledgeSynthesis}</p>
-					</div>
-				{/if}
+		<div class="core-experience">
+			<div class="context-column">
+				<ContextCard
+					nodeId={currentNodeId}
+					synthesis={knowledgeSynthesis}
+					narrativeHistory={narrativeHistory}
+				/>
 			</div>
 
-			<!-- Choices area (right) -->
-			<div class="choices-area">
+			<div class="choices-column" class:is-terminal={isTerminal}>
 				{#if loading}
-					<h2 class="choices-heading">Where next?</h2>
 					<div class="loading-state" in:fade={{ duration: 300 }}>
 						<div class="spinner"></div>
 						<p>Weaving the path...</p>
 					</div>
 				{:else if isTerminal}
-					<h2 class="choices-heading">Journey complete</h2>
 					<div class="terminal-state" in:fade={{ duration: 400 }}>
-						<p>You have reached the end of this traversal.</p>
-						<p class="terminal-path">
-							{playerPath.length} nodes visited
-						</p>
-						{#if knowledgeSynthesis}
-							<p class="terminal-synthesis">{knowledgeSynthesis}</p>
-						{/if}
-						<button class="enter-btn" onclick={resetSession}>Begin again</button>
+						<div class="terminal-header">
+							<h2>Journey Complete</h2>
+							<p class="terminal-path">{playerPath.length} nodes visited</p>
+						</div>
+						<button class="enter-btn" onclick={resetSession}>Begin new traversal</button>
 					</div>
 				{:else}
-					<h2 class="choices-heading">Where next?</h2>
-					<div class="choice-cards">
+					<h3 class="step-heading">Next Steps Options</h3>
+					<div class="choice-grid">
 						{#each choiceCards as card, i (card.destination_node_id)}
-							<button
-								class="choice-card"
-								style="border-left-color: {card.thematic_color};"
-								onclick={() => handleHop(card)}
-								in:fly={{ x: 40, duration: 400, delay: i * 80, easing: cubicOut }}
-							>
-								<p class="choice-text">{card.text}</p>
-								<span class="choice-node">{card.destination_node_id}</span>
-							</button>
+							<div class="choice-wrapper" in:fly={{ y: 20, duration: 400, delay: i * 80, easing: cubicOut }}>
+								<ChoiceCard
+									text={card.text}
+									destinationNodeId={card.destination_node_id}
+									thematicColor={card.thematic_color}
+									onClick={() => handleHop(card)}
+								/>
+							</div>
 						{/each}
 					</div>
 				{/if}
 			</div>
-		</section>
+		</div>
 
 		<InnerViewPanel open={innerViewOpen} {hopData} onClose={() => (innerViewOpen = false)} />
+
+		<!-- Graph Side Panel -->
+		<aside class="graph-panel-side" class:panel-open={graphSideOpen}>
+			<div class="graph-header">
+				<span class="graph-title">Visualizer</span>
+				<button class="close-btn" onclick={() => (graphSideOpen = false)}>✕</button>
+			</div>
+			<div class="graph-body">
+				{#if graphSideOpen}
+					<TraverseGraph nodes={data.nodes} edges={data.edges} playerPath={playerPath} {currentNodeId} />
+				{/if}
+			</div>
+		</aside>
 	{/if}
 </div>
 
@@ -510,110 +503,145 @@
 		font-size: 13px;
 	}
 
-	/* ── Traverse panel (narrative + choices) ───────────────────────── */
-	.traverse-panel {
-		flex: 1;
-		display: grid;
-		grid-template-columns: 1fr 380px;
-		overflow: hidden;
-	}
-
-	/* ── Narrative area ────────────────────────────────────────────── */
-	.narrative-area {
-		padding: 32px 40px;
-		overflow-y: auto;
-		background: #0f172a;
-		border-right: 1px solid #1e293b;
-	}
-
-	.path-breadcrumb {
-		font-size: 12px;
-		color: #64748b;
-		margin-bottom: 24px;
-		line-height: 1.5;
-		letter-spacing: 0.02em;
-		text-transform: capitalize;
-	}
-
-	.narrative-prompt {
-		color: #475569;
-		font-size: 15px;
-		line-height: 1.7;
-		font-style: italic;
-		margin-top: 40px;
-		text-align: center;
-	}
-
-	.narrative-passages {
+	/* ── Graph Side Panel ─────────────────────────────────────────── */
+	.graph-panel-side {
+		position: fixed;
+		top: 65px;
+		right: 0;
+		width: 480px;
+		height: calc(100vh - 65px);
+		background: rgba(15, 23, 42, 0.9);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border-left: 1px solid #1e293b;
 		display: flex;
 		flex-direction: column;
+		z-index: 45;
+		transform: translateX(100%);
+		transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+	}
+
+	.graph-panel-side.panel-open {
+		transform: translateX(0);
+	}
+
+	.graph-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 14px 16px;
+		border-bottom: 1px solid #1e293b;
+		background: #0f172a;
+		flex-shrink: 0;
+	}
+
+	.graph-title {
+		font-size: 13px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: #93c5fd;
+	}
+
+	.close-btn {
+		background: none;
+		border: none;
+		color: #64748b;
+		font-size: 14px;
+		cursor: pointer;
+		padding: 4px 6px;
+		border-radius: 4px;
+		line-height: 1;
+		transition: color 0.15s, background 0.15s;
+	}
+
+	.close-btn:hover {
+		color: #e2e8f0;
+		background: #1e293b;
+	}
+
+	.graph-body {
+		flex: 1;
+		min-height: 0;
+		position: relative;
+	}
+
+	/* ── Core Layout (Stripped Down) ──────────────────────────────── */
+	.core-experience {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 40px 24px;
+		overflow-y: auto;
+		background: radial-gradient(circle at 50% -20%, #1e293b 0%, #020617 70%);
+		scrollbar-width: thin;
+		scrollbar-color: #334155 transparent;
+	}
+
+	.core-experience::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.core-experience::-webkit-scrollbar-thumb {
+		background: #334155;
+		border-radius: 3px;
+	}
+
+	.context-column {
+		width: 100%;
+		max-width: 800px;
+		margin-bottom: 24px;
+	}
+
+	.choices-column {
+		width: 100%;
+		max-width: 800px;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+	}
+
+	.step-heading {
+		font-size: 16px;
+		font-weight: 600;
+		color: #94a3b8;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		margin: 0;
+		border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+		padding-bottom: 12px;
+	}
+
+	.choice-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
 		gap: 20px;
 	}
 
-	.narrative-passage {
-		color: #cbd5e1;
-		font-size: 15px;
-		line-height: 1.8;
-		margin: 0;
-		padding: 16px 20px;
-		background: #111f35;
-		border-radius: 8px;
-		border-left: 3px solid transparent;
-		transition: border-color 0.2s;
+	.terminal-state {
+		text-align: center;
+		padding: 40px;
+		background: rgba(30, 41, 59, 0.4);
+		border: 1px solid rgba(51, 65, 85, 0.6);
+		border-radius: 16px;
+		backdrop-filter: blur(8px);
 	}
 
-	.narrative-passage--latest {
+	.terminal-header h2 {
+		font-size: 32px;
 		color: #e2e8f0;
-		border-left-color: #6ee7b7;
-		background: #142035;
+		margin: 0 0 12px;
+		letter-spacing: -0.02em;
 	}
 
-	.knowledge-synthesis {
-		margin-top: 32px;
-		padding: 16px 20px;
-		background: #0d1e30;
-		border: 1px solid #1e3a5f;
-		border-radius: 8px;
-	}
-
-	.synthesis-label {
-		font-size: 11px;
-		color: #93c5fd;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		font-weight: 600;
-		display: block;
-		margin-bottom: 8px;
-	}
-
-	.knowledge-synthesis p {
+	.terminal-path {
 		color: #94a3b8;
-		font-size: 14px;
-		line-height: 1.6;
-		margin: 0;
-		font-style: italic;
+		font-size: 16px;
+		margin-bottom: 32px;
 	}
 
-	/* ── Choices area ──────────────────────────────────────────────── */
-	.choices-area {
-		padding: 28px 24px;
-		background: #0a1628;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-	}
-
-	.choices-heading {
-		font-size: 15px;
-		font-weight: 700;
-		color: #94a3b8;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		margin: 0;
-	}
-
-	/* ── Loading state ─────────────────────────────────────────────── */
 	.loading-state {
 		display: flex;
 		flex-direction: column;
@@ -639,78 +667,6 @@
 		}
 	}
 
-	/* ── Choice cards ──────────────────────────────────────────────── */
-	.choice-cards {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-
-	.choice-card {
-		background: #1e293b;
-		border: 1px solid #334155;
-		border-left: 4px solid #6ee7b7;
-		border-radius: 10px;
-		padding: 16px;
-		cursor: pointer;
-		text-align: left;
-		transition:
-			transform 0.15s ease-out,
-			border-color 0.15s,
-			background 0.15s;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.choice-card:hover {
-		transform: translateY(-2px);
-		background: #253348;
-		border-color: #4b6480;
-	}
-
-	.choice-text {
-		color: #cbd5e1;
-		font-size: 14px;
-		line-height: 1.55;
-		margin: 0;
-	}
-
-	.choice-node {
-		font-size: 11px;
-		color: #64748b;
-		font-family: 'JetBrains Mono', monospace;
-		letter-spacing: 0.02em;
-	}
-
-	/* ── Terminal state ────────────────────────────────────────────── */
-	.terminal-state {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-	}
-
-	.terminal-state p {
-		color: #64748b;
-		font-size: 14px;
-		line-height: 1.6;
-		margin: 0;
-	}
-
-	.terminal-path {
-		font-size: 13px !important;
-		color: #94a3b8 !important;
-	}
-
-	.terminal-synthesis {
-		color: #94a3b8 !important;
-		font-style: italic;
-		padding: 12px 14px;
-		background: #0d1e30;
-		border-radius: 8px;
-		border-left: 3px solid #93c5fd;
-	}
-
 	.enter-btn {
 		padding: 11px 20px;
 		background: #059669;
@@ -721,7 +677,7 @@
 		font-weight: 600;
 		cursor: pointer;
 		transition: background 0.2s;
-		align-self: flex-start;
+		display: inline-block;
 	}
 
 	.enter-btn:hover {
