@@ -28,6 +28,7 @@
 	let errorMessage = $state<string | null>(null);
 	let narrativeHistory = $state<string[]>([]);
 	let narrativeAreaEl = $state<HTMLElement | null>(null);
+	let pendingNodeLabel = $state<string | null>(null);
 
 	const suggestedQueries = [
 		'quantum entanglement',
@@ -62,6 +63,9 @@
 		if (!searchQuery.trim()) return;
 		loading = true;
 		errorMessage = null;
+		// Transition to traversal view immediately so user sees the loading state
+		sessionState = 'loading';
+		pendingNodeLabel = searchQuery.trim();
 
 		try {
 			const res = await fetch('/api/traverse/enter', {
@@ -89,6 +93,7 @@
 			errorMessage = 'Could not connect to the gateway. Is it running?';
 		} finally {
 			loading = false;
+			if (errorMessage) setTimeout(() => (errorMessage = null), 5000);
 		}
 	}
 
@@ -96,6 +101,7 @@
 		if (!sessionId) return;
 		loading = true;
 		errorMessage = null;
+		pendingNodeLabel = card.destination_node_id.replace(/-/g, ' ');
 
 		try {
 			const res = await fetch('/api/traverse/hop', {
@@ -104,6 +110,11 @@
 				body: JSON.stringify({ session_id: sessionId, destination_node_id: card.destination_node_id })
 			});
 			if (!res.ok) {
+				if (res.status === 404) {
+					// Session expired or not found — silently restart
+					resetSession();
+					return;
+				}
 				const err = await res.json().catch(() => ({ error: 'Hop failed' }));
 				errorMessage = err.error ?? 'Hop failed';
 				return;
@@ -122,6 +133,8 @@
 			errorMessage = 'Could not connect to the gateway.';
 		} finally {
 			loading = false;
+			pendingNodeLabel = null;
+			if (errorMessage) setTimeout(() => (errorMessage = null), 5000);
 		}
 	}
 
@@ -136,6 +149,7 @@
 		hopData = null;
 		errorMessage = null;
 		narrativeHistory = [];
+		pendingNodeLabel = null;
 	}
 
 	function pickSuggestion(q: string) {

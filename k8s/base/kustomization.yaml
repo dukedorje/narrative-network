@@ -6,7 +6,7 @@ namespace: narrative-network
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secrets.yaml
+  # secrets.yaml excluded — use `just secrets` to push from .env
   - gateway.yaml
   - validator.yaml
   - miner.yaml

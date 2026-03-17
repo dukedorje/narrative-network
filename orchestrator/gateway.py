@@ -878,9 +878,11 @@ class _LocalNarrator:
             }
             for nid in adjacent[:3]
         ]
-        msg = reason or "Narrative generation unavailable"
+        if reason:
+            log.warning("Placeholder narrative for %s: %s", node_id, reason)
+        label = node_id.replace("-", " ").title()
         return {
-            "narrative_passage": f"({msg}.) You are at {node_id.replace('-', ' ').title()}.",
+            "narrative_passage": f"You are at {label}. Choose a path to continue your journey.",
             "choice_cards": cards,
             "knowledge_synthesis": "",
         }
