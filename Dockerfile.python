@@ -24,9 +24,47 @@ ENV UV_LINK_MODE=copy
 
 # =============================================================================
 # Light builder — base deps only (no ML extras)
-# For: validator, narrative-miner
+# For: validator
 # =============================================================================
 FROM builder-common AS builder-light
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra bt
+
+COPY subnet/ subnet/
+COPY domain/ domain/
+COPY orchestrator/ orchestrator/
+COPY evolution/ evolution/
+COPY seed/ seed/
+COPY docs/corpora/ docs/corpora/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --extra bt
+
+# =============================================================================
+# ML builder — base deps + onnxruntime/tokenizers/huggingface-hub
+# For: gateway, miner
+# =============================================================================
+FROM builder-common AS builder-ml
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra bt --extra ml
+
+COPY subnet/ subnet/
+COPY domain/ domain/
+COPY orchestrator/ orchestrator/
+COPY evolution/ evolution/
+COPY seed/ seed/
+COPY docs/corpora/ docs/corpora/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --extra bt --extra ml
+
+# =============================================================================
+# Local builder — no bittensor, no ML (for local dev / hybrid harness mode)
+# For: gateway-local, local-validator
+# =============================================================================
+FROM builder-common AS builder-local
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
@@ -42,10 +80,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
 # =============================================================================
-# ML builder — base deps + onnxruntime/tokenizers/huggingface-hub
-# For: gateway, domain-miner
+# Local ML builder — ML extras but no bittensor
+# For: gateway-local (needs ONNX embeddings)
 # =============================================================================
-FROM builder-common AS builder-ml
+FROM builder-common AS builder-local-ml
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project --extra ml
@@ -96,6 +134,38 @@ COPY --from=builder-ml /app/docs /app/docs
 ENV PATH="/app/.venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/.venv"
 
+# --- Local runtime (no bittensor, no ML) ---
+FROM python:3.12-slim AS runtime-local
+
+WORKDIR /app
+
+COPY --from=builder-local /app/.venv /app/.venv
+COPY --from=builder-local /app/subnet /app/subnet
+COPY --from=builder-local /app/domain /app/domain
+COPY --from=builder-local /app/orchestrator /app/orchestrator
+COPY --from=builder-local /app/evolution /app/evolution
+COPY --from=builder-local /app/seed /app/seed
+COPY --from=builder-local /app/docs /app/docs
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
+
+# --- Local ML runtime (ML but no bittensor) ---
+FROM python:3.12-slim AS runtime-local-ml
+
+WORKDIR /app
+
+COPY --from=builder-local-ml /app/.venv /app/.venv
+COPY --from=builder-local-ml /app/subnet /app/subnet
+COPY --from=builder-local-ml /app/domain /app/domain
+COPY --from=builder-local-ml /app/orchestrator /app/orchestrator
+COPY --from=builder-local-ml /app/evolution /app/evolution
+COPY --from=builder-local-ml /app/seed /app/seed
+COPY --from=builder-local-ml /app/docs /app/docs
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
+
 # =============================================================================
 # Application targets
 # =============================================================================
@@ -110,12 +180,19 @@ FROM runtime-light AS validator
 EXPOSE 8091
 CMD ["python", "-m", "subnet.validator"]
 
-# --- Domain Miner (needs ML for corpus embedding) ---
-FROM runtime AS domain-miner
+# --- Miner (needs ML for corpus embeddings; handles both domain and narrative) ---
+FROM runtime AS miner
 EXPOSE 8091
-CMD ["python", "-m", "domain.miner"]
+CMD ["python", "-m", "domain.unified_miner"]
 
-# --- Narrative Miner (no ML — uses OpenRouter API) ---
-FROM runtime-light AS narrative-miner
-EXPOSE 8093
-CMD ["python", "-m", "domain.narrative.miner"]
+# --- Local Gateway (ML for embeddings, no bittensor) ---
+FROM runtime-local-ml AS gateway-local
+EXPOSE 8080
+ENV AXON_NETWORK=local
+CMD ["uvicorn", "orchestrator.gateway:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# --- Local Validator (no bittensor, no ML, no torch) ---
+FROM runtime-local AS local-validator
+EXPOSE 8091
+ENV AXON_NETWORK=local
+CMD ["python", "-m", "subnet.validator"]

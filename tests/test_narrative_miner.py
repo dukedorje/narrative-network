@@ -1,21 +1,20 @@
-"""Unit tests for domain.narrative.miner.NarrativeMiner._forward() with mocked _generate."""
+"""Unit tests for domain.unified_miner.Miner._forward_nh() with mocked _generate."""
 
-import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from domain.narrative.miner import NarrativeMiner
-from subnet.protocol import NarrativeHop, ChoiceCard
-
+import domain.unified_miner as _unified_miner_mod
+from domain.unified_miner import Miner
+from subnet.protocol_local import NarrativeHop
 
 # ---------------------------------------------------------------------------
-# Minimal stand-in — only attributes _forward needs
+# Minimal stand-in — only attributes _forward_nh needs
 # ---------------------------------------------------------------------------
 
 
-class MinimalNarrativeMiner:
-    """Minimal stand-in with just the attributes _forward needs."""
+class MinimalMiner:
+    """Minimal stand-in with just the attributes _forward_nh needs."""
 
     def __init__(self, uid=1, node_id="test-node", persona="neutral"):
         self.uid = uid
@@ -39,8 +38,10 @@ class MinimalNarrativeMiner:
 
 @pytest.fixture
 def minimal_miner():
-    miner = MinimalNarrativeMiner(uid=1, node_id="test-node", persona="neutral")
-    return miner
+    miner = MinimalMiner(uid=1, node_id="test-node", persona="neutral")
+    # Patch module-level guard so _forward_nh doesn't short-circuit on missing key
+    with patch.object(_unified_miner_mod, "_OPENROUTER_API_KEY", "sk-test"):
+        yield miner
 
 
 @pytest.fixture
@@ -77,7 +78,7 @@ async def test_forward_returns_passage(minimal_miner, good_llm_result):
     minimal_miner._generate = AsyncMock(return_value=good_llm_result)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.narrative_passage is not None
     assert len(result.narrative_passage) > 0
@@ -89,7 +90,7 @@ async def test_forward_returns_choice_cards(minimal_miner, good_llm_result):
     minimal_miner._generate = AsyncMock(return_value=good_llm_result)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.choice_cards is not None
     assert len(result.choice_cards) == 2
@@ -104,7 +105,7 @@ async def test_forward_sets_agent_uid(minimal_miner, good_llm_result):
     minimal_miner._generate = AsyncMock(return_value=good_llm_result)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.agent_uid == 1
 
@@ -114,7 +115,7 @@ async def test_forward_handles_generation_failure(minimal_miner):
     minimal_miner._generate = AsyncMock(return_value=None)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.narrative_passage == "(generation failed)"
     assert result.choice_cards == []
@@ -127,7 +128,7 @@ async def test_forward_handles_malformed_json(minimal_miner):
     minimal_miner._generate = AsyncMock(return_value=None)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.narrative_passage == "(generation failed)"
     assert result.choice_cards == []
@@ -148,7 +149,7 @@ async def test_forward_handles_malformed_choice_cards(minimal_miner):
     minimal_miner._generate = AsyncMock(return_value=result_with_bad_cards)
 
     synapse = _make_synapse()
-    result = await NarrativeMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_nh(minimal_miner, synapse)
 
     assert result.choice_cards is not None
     assert len(result.choice_cards) == 1

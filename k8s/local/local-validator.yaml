@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-validator
+  namespace: narrative-network
+  labels:
+    app: local-validator
+    app.kubernetes.io/part-of: narrative-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: local-validator
+  template:
+    metadata:
+      labels:
+        app: local-validator
+    spec:
+      containers:
+        - name: local-validator
+          image: narrative-network-local-validator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AXON_NETWORK
+              value: "local"
+          envFrom:
+            - configMapRef:
+                name: narrative-network-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      terminationGracePeriodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-validator
+  namespace: narrative-network
+  labels:
+    app: local-validator
+    app.kubernetes.io/part-of: narrative-network
+spec:
+  selector:
+    app: local-validator
+  ports:
+    - name: http
+      port: 8091
+      targetPort: 8091
+      protocol: TCP
+  type: ClusterIP

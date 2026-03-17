@@ -1,4 +1,4 @@
-"""Entry-node ranking and narrative miner resolution."""
+"""Entry-node ranking and miner resolution."""
 
 from __future__ import annotations
 
@@ -43,9 +43,9 @@ class Router:
     rank_entry_nodes: given a query embedding, returns a ranked list of live
         node IDs ordered by domain similarity.
 
-    resolve_narrative_miner: given a destination node ID, returns the axon
-        of the miner registered for that node (highest stake among miners
-        serving that node, falling back to highest-stake overall).
+    resolve_miner: given a destination node ID, returns the axon of the miner
+        registered for that node (highest stake among miners serving that node,
+        falling back to highest-stake overall).
 
     The miner-to-node index is populated two ways:
       1. Eagerly via ``index_miner()`` / ``deindex_miner()`` — called from
@@ -162,7 +162,7 @@ class Router:
         scored.sort(key=lambda t: t[0], reverse=True)
         return [node_id for _, node_id in scored[:top_k]]
 
-    def resolve_narrative_miner(self, destination_node_id: NodeID) -> bt.AxonInfo | None:
+    def resolve_miner(self, destination_node_id: NodeID) -> bt.AxonInfo | None:
         """Return the axon for the miner registered at destination_node_id.
 
         Lookup order:
@@ -179,7 +179,7 @@ class Router:
             if bucket:
                 best = max(bucket, key=lambda t: t[0])
                 log.debug(
-                    "resolve_narrative_miner: node=%s -> uid=%d stake=%.2f (indexed)",
+                    "resolve_miner: node=%s -> uid=%d stake=%.2f (indexed)",
                     destination_node_id,
                     best[1],
                     best[0],
@@ -188,7 +188,7 @@ class Router:
 
         # --- metagraph fallback ---
         log.debug(
-            "resolve_narrative_miner: node=%s not in index, using stake fallback",
+            "resolve_miner: node=%s not in index, using stake fallback",
             destination_node_id,
         )
         candidates: list[tuple[float, bt.AxonInfo]] = []

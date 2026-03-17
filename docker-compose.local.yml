@@ -1,0 +1,74 @@
+# Local development stack — no bittensor, no Kind required
+# Usage: docker compose -f docker-compose.local.yml up --build
+#
+# Services:
+#   gateway       — FastAPI orchestrator (ONNX embeddings, no bt)
+#   local-validator — LocalValidator with real scoring (no bt, no torch)
+#   frontend      — SvelteKit web app
+#   redis         — Session store
+#
+# Access:
+#   Frontend: http://localhost:3000
+#   Gateway:  http://localhost:8080
+#   Redis:    localhost:6379
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+      target: gateway-local
+    ports:
+      - "8080:8080"
+    environment:
+      AXON_NETWORK: local
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/healthz').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  local-validator:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+      target: local-validator
+    environment:
+      AXON_NETWORK: local
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      ORIGIN: http://localhost:3000
+      GATEWAY_URL: http://gateway:8080
+    depends_on:
+      gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:

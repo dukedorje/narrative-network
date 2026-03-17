@@ -11,29 +11,14 @@ to Yuma Consensus via set_weights().
 
 from __future__ import annotations
 
-import enum
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from subnet.config import (
     EMISSION_QUALITY_SHARE,
     EMISSION_TOPOLOGY_SHARE,
     EMISSION_TRAVERSAL_SHARE,
 )
-
-
-# ---------------------------------------------------------------------------
-# MinerType enum
-# ---------------------------------------------------------------------------
-
-class MinerType(enum.Enum):
-    """Discriminates miners by the synapse type they serve."""
-
-    DOMAIN = "domain"       # Serves KnowledgeQuery; has a corpus
-    NARRATIVE = "narrative" # Serves NarrativeHop; no corpus
-    UNIFIED = "unified"     # Serves both synapse types
-    UNKNOWN = "unknown"     # Not yet classified
-
 
 # ---------------------------------------------------------------------------
 # Snapshot dataclass
@@ -49,7 +34,6 @@ class MinerScoreSnapshot:
     topology_score: float = 0.0
     corpus_score: float = 1.0      # defaults to pass; zero triggers near-zero emission
     traversal_count: int = 0
-    miner_type: MinerType = MinerType.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +162,7 @@ class EmissionCalculator:
                 + self._topology_share * top_weights[i]
             )
             # Corpus gate: zero corpus score collapses weight to near-zero.
-            # Narrative miners have no corpus, so the gate does not apply to them.
-            # All other types (DOMAIN, UNIFIED, UNKNOWN) are subject to the gate.
-            corpus_gate_applies = snap.miner_type != MinerType.NARRATIVE
-            if corpus_gate_applies and snap.corpus_score == 0.0:
+            if snap.corpus_score == 0.0:
                 score = 1e-6
             combined.append(score)
 

@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../base
+  - local-validator.yaml
 
 patches:
   # --- Remove production-only resources ---
@@ -164,3 +165,17 @@ patches:
       - op: add
         path: /spec/ports/0/nodePort
         value: 30081
+
+  # --- Use local gateway image (no bittensor) ---
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: "narrative-network-gateway-local:latest"
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: AXON_NETWORK
+            value: "local"

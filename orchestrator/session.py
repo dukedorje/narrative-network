@@ -87,7 +87,7 @@ class OrchestratorSession:
         query_text: str,
         axons: list[bt.AxonInfo],
     ) -> list[KnowledgeQuery]:
-        """Broadcast a KnowledgeQuery to domain miners and return all responses."""
+        """Broadcast a KnowledgeQuery to miners and return all responses."""
         if not axons or self.dendrite is None:
             return []
 

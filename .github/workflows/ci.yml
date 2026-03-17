@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Verify all local-mode imports work without bittensor installed
+  no-bt-imports:
+    name: No-bittensor import gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Install without bittensor
+        run: uv sync --frozen --extra dev
+      - name: Verify _BT_AVAILABLE is False
+        run: uv run python -c "from subnet._bt_compat import _BT_AVAILABLE; assert not _BT_AVAILABLE, 'bittensor should not be available'"
+      - name: Verify local protocol imports
+        run: uv run python -c "from subnet.protocol_local import KnowledgeQuery, NarrativeHop, WeightCommit"
+      - name: Verify harness imports
+        run: uv run python -c "from subnet.harness import create_local_network"
+      - name: Verify gateway dev mode
+        run: uv run python -c "from orchestrator.gateway import create_dev_app"
+      - name: Verify LocalValidator
+        run: uv run python -c "from subnet.validator import LocalValidator"
+      - name: Verify evolution offline
+        run: uv run python -c "from evolution.local import LocalProposalSubmitter, LocalVotingEngine, LocalBlockClock"
+      - name: Run evolution offline tests
+        run: uv run pytest tests/test_evolution_local.py -v
+
+  # Run full test suite with bittensor
+  tests:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Install with all extras
+        run: uv sync --frozen --extra bt --extra dev
+      - name: Lint
+        run: uv run ruff check .
+      - name: Run tests
+        run: uv run pytest -v

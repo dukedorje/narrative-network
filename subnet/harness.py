@@ -15,7 +15,6 @@ import numpy as np
 
 from subnet._bt_compat import _BT_AVAILABLE
 
-
 # ---------------------------------------------------------------------------
 # FakeEmbedder — deterministic 768-dim vectors without SentenceTransformer
 # ---------------------------------------------------------------------------
@@ -53,7 +52,9 @@ class FakeEmbedder:
 class MockAxonInfo:
     """Minimal axon info for metagraph."""
 
-    def __init__(self, is_serving: bool = True, ip: str = "127.0.0.1", port: int = 8091, uid: int = 0):
+    def __init__(
+        self, is_serving: bool = True, ip: str = "127.0.0.1", port: int = 8091, uid: int = 0,
+    ):
         self.is_serving = is_serving
         self.ip = ip
         self.port = port

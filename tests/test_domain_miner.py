@@ -1,22 +1,20 @@
-"""Unit tests for domain.miner.DomainMiner._forward() without real BT dependencies."""
+"""Unit tests for domain.unified_miner.Miner._forward_kq() without real BT dependencies."""
 
 import hashlib
 
-import numpy as np
 import pytest
 
 from domain.corpus import Chunk, MerkleProver
-from domain.miner import DomainMiner
-from subnet.protocol import KnowledgeQuery
-
+from domain.unified_miner import Miner
+from subnet.protocol_local import KnowledgeQuery
 
 # ---------------------------------------------------------------------------
-# Minimal stand-in — only the attributes _forward needs
+# Minimal stand-in — only the attributes _forward_kq needs
 # ---------------------------------------------------------------------------
 
 
-class MinimalDomainMiner:
-    """Minimal stand-in with just the attributes _forward needs."""
+class MinimalMiner:
+    """Minimal stand-in with just the attributes _forward_kq needs."""
 
     def __init__(self, chunks, merkle_prover, node_id="test-node", uid=1):
         self.chunks = chunks
@@ -62,7 +60,7 @@ def domain_miner_components():
 @pytest.fixture
 def minimal_miner(domain_miner_components):
     chunks, prover = domain_miner_components
-    return MinimalDomainMiner(chunks=chunks, merkle_prover=prover)
+    return MinimalMiner(chunks=chunks, merkle_prover=prover)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +80,7 @@ async def test_forward_chunk_retrieval(minimal_miner):
         top_k=3,
     )
 
-    result = await DomainMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_kq(minimal_miner, synapse)
 
     assert result.chunks is not None
     assert len(result.chunks) > 0
@@ -95,7 +93,7 @@ async def test_forward_corpus_challenge(minimal_miner):
     """Corpus challenge returns a valid Merkle proof."""
     synapse = KnowledgeQuery(query_text="__corpus_challenge__")
 
-    result = await DomainMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_kq(minimal_miner, synapse)
 
     assert result.merkle_proof is not None
     assert "leaf_hash" in result.merkle_proof
@@ -107,7 +105,7 @@ async def test_forward_corpus_challenge(minimal_miner):
 
 async def test_forward_empty_corpus():
     """No chunks loaded — returns empty chunk list."""
-    miner = MinimalDomainMiner(chunks=[], merkle_prover=None, node_id="empty-node", uid=2)
+    miner = MinimalMiner(chunks=[], merkle_prover=None, node_id="empty-node", uid=2)
     miner.merkle_prover = None
 
     query_embedding = [0.0] * 768
@@ -119,7 +117,7 @@ async def test_forward_empty_corpus():
         top_k=5,
     )
 
-    result = await DomainMiner._forward(miner, synapse)
+    result = await Miner._forward_kq(miner, synapse)
 
     assert result.chunks == []
     assert result.domain_similarity == 0.0
@@ -135,7 +133,7 @@ async def test_forward_empty_query_embedding(minimal_miner):
         top_k=5,
     )
 
-    result = await DomainMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_kq(minimal_miner, synapse)
 
     assert result.chunks == []
     assert result.domain_similarity == 0.0
@@ -152,7 +150,7 @@ async def test_forward_sets_node_id_and_uid(minimal_miner):
         top_k=2,
     )
 
-    result = await DomainMiner._forward(minimal_miner, synapse)
+    result = await Miner._forward_kq(minimal_miner, synapse)
 
     assert result.node_id == "test-node"
     assert result.agent_uid == 1

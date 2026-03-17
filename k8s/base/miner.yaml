@@ -2,34 +2,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: narrative-miner
+  name: miner
   namespace: narrative-network
   labels:
-    app: narrative-miner
+    app: miner
     app.kubernetes.io/part-of: narrative-network
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: narrative-miner
+      app: miner
   template:
     metadata:
       labels:
-        app: narrative-miner
+        app: miner
     spec:
       containers:
-        - name: narrative-miner
-          image: narrative-network-narrative-miner:latest
+        - name: miner
+          image: narrative-network-miner:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: axon
-              containerPort: 8093
+              containerPort: 8091
               protocol: TCP
           envFrom:
             - configMapRef:
                 name: narrative-network-config
             - secretRef:
                 name: narrative-network-secrets
+          volumeMounts:
+            - name: embedding-cache
+              mountPath: /data/embedding_cache
           resources:
             requests:
               memory: "64Mi"
@@ -41,31 +44,35 @@ spec:
             httpGet:
               path: /healthz
               port: axon
-            initialDelaySeconds: 10
-            periodSeconds: 20
+            initialDelaySeconds: 30
+            periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /healthz
               port: axon
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: embedding-cache
+          emptyDir:
+            sizeLimit: 500Mi
       terminationGracePeriodSeconds: 30
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: narrative-miner
+  name: miner
   namespace: narrative-network
   labels:
-    app: narrative-miner
+    app: miner
     app.kubernetes.io/part-of: narrative-network
 spec:
   selector:
-    app: narrative-miner
+    app: miner
   ports:
     - name: axon
-      port: 8093
+      port: 8091
       targetPort: axon
       protocol: TCP
   type: ClusterIP

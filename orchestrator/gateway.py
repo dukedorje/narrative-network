@@ -290,7 +290,7 @@ def create_app(
     async def enter(req: EnterRequest) -> EnterResponse:
         query_embedding = embedder.embed_one(req.query_text)
 
-        # Broadcast KnowledgeQuery to all domain miners to find entry nodes
+        # Broadcast KnowledgeQuery to all miners to find entry nodes
         if _BT_AVAILABLE:
             from subnet.protocol import KnowledgeQuery
         else:
@@ -317,7 +317,7 @@ def create_app(
         )
         valid_responses = [r for r in responses if r.node_id is not None]
 
-        # Update the router node index from live responses so resolve_narrative_miner
+        # Update the router node index from live responses so resolve_miner
         # can route by node_id without needing an on-chain commitment fetch.
         router.update_from_responses(responses, active_axons)
 
@@ -332,7 +332,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="No entry nodes resolved")
 
         entry_node_id = ranked_nodes[0]
-        axon = router.resolve_narrative_miner(entry_node_id)
+        axon = router.resolve_miner(entry_node_id)
         if axon is None:
             raise HTTPException(
                 status_code=503, detail=f"No miner found for node {entry_node_id}"
@@ -386,7 +386,7 @@ def create_app(
                 status_code=409, detail=f"Session is {session.state.value}"
             )
 
-        axon = router.resolve_narrative_miner(req.destination_node_id)
+        axon = router.resolve_miner(req.destination_node_id)
         if axon is None:
             raise HTTPException(
                 status_code=503,
@@ -492,7 +492,7 @@ def create_app(
                     await websocket.send_json({"error": "destination_node_id required"})
                     continue
 
-                axon = router.resolve_narrative_miner(dest_node)
+                axon = router.resolve_miner(dest_node)
                 if axon is None:
                     await websocket.send_json({"error": f"No miner for node {dest_node}"})
                     continue

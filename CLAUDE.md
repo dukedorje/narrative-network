@@ -40,11 +40,10 @@ uv sync --extra dev              # With dev deps (pytest, ruff, mypy)
 uv run pytest                    # Run tests (tests/ directory)
 uv run ruff check .              # Lint
 uv run ruff format .             # Format
-uv run python -m subnet.validator  # Run validator
-uv run python -m domain.miner     # Run domain miner
-uv run python -m domain.narrative.miner  # Run narrative miner
+uv run python -m subnet.validator       # Run validator
+uv run python -m domain.unified_miner  # Run unified miner (corpus + narrative)
 ```
-Entry points (after install): `narrative-validator`, `narrative-domain-miner`, `narrative-miner`, `narrative-gateway`
+Entry points (after install): `narrative-validator`, `narrative-miner`, `narrative-gateway`
 
 Requires Python >= 3.12. Uses Bittensor SDK v10 (`bt.Wallet`, `bt.Subtensor`, etc — capitalized).
 
@@ -63,21 +62,20 @@ kubectl apply -k k8s/            # Deploy full stack
 - `reward.py` — Scoring functions: traversal (0.40), quality (0.30), topology (0.15), corpus (0.15)
 - `config.py` — All tunable constants + `SubnetConfig` class. Env override via `AXON_` prefix (e.g. `AXON_NETUID=1`)
 - `graph_store.py` — In-memory graph with optional KuzuDB persistence. Brandes betweenness centrality, edge decay, traversal logging
-- `emissions.py` — Three emission pools (Traversal, Quality, Topology) with per-pool normalization (rank/linear/softmax). `EmissionCalculator` produces final weight vector
+- `emissions.py` — Three emission pools (Traversal, Quality, Topology) with per-pool normalization (rank/linear/softmax). `EmissionCalculator` produces final weight vector. All miners scored uniformly on all axes.
 - `metagraph_watcher.py` — Async background poller with `AxonCache`, fires `RegistrationEvent` callbacks on miner changes
 
-**`domain/`** — Miner implementations
-- `miner.py` — Domain miner: corpus chunk retrieval via numpy cosine similarity + Merkle proof responses
+**`domain/`** — Unified miner implementation
+- `unified_miner.py` — Single `Miner` class serving both `KnowledgeQuery` (corpus retrieval + Merkle proofs) and `NarrativeHop` (LLM narrative generation) from one axon. One UID, one process.
 - `corpus.py` — `CorpusLoader` (chunking, SentenceTransformer embedding, pickle cache) + `MerkleProver` (SHA-256 binary Merkle tree with inclusion proofs). No vector DB — numpy in-memory
 - `manifest.py` — `DomainManifest` dataclass (IPFS-pinned domain declaration)
-- `narrative/miner.py` — Narrative miner: generates hop text via OpenRouter (OpenAI-compatible API), Redis-backed session context
 - `narrative/prompt.py` — Persona catalogue + prompt builder for hop generation
 - `narrative/session_store.py` — Redis session store with in-memory fallback
 
 **`orchestrator/`** — Gateway and session management
 - `gateway.py` — FastAPI app: `POST /enter`, `POST /hop`, `GET /session/{id}`, `WS /session/{id}/live`, `GET /healthz`
 - `session.py` — `OrchestratorSession`: manages traversal lifecycle, sends KnowledgeQuery/NarrativeHop via dendrite
-- `router.py` — Entry-node ranking by domain centroid similarity, narrative miner resolution
+- `router.py` — Entry-node ranking by domain centroid similarity, miner resolution
 - `embedder.py` — SentenceTransformer wrapper (`all-mpnet-base-v2`, 768-dim)
 - `safety_guard.py` — Path cycle prevention, word count enforcement
 
@@ -93,11 +91,12 @@ kubectl apply -k k8s/            # Deploy full stack
 - Storybook for component development (`src/stories/`)
 
 **`k8s/`** — Kubernetes manifests (Kustomize)
-- Gateway (HPA 2-5), Validator (StatefulSet + PVC), Domain/Narrative miners, Frontend, Redis, IPFS, Ingress
+- Gateway (HPA 2-5), Validator (StatefulSet + PVC), Unified miner, Frontend, Redis, IPFS, Ingress
 
 ### Key Design Decisions
-- **No vector DB service**: Domain miners use numpy cosine similarity in-process. Corpus fits in memory
-- **OpenRouter for LLM**: Narrative miners call OpenRouter API (no GPU infrastructure). Set `OPENROUTER_API_KEY` env var
+- **Unified miner**: Single process serves both corpus retrieval (KnowledgeQuery) and narrative generation (NarrativeHop). One UID, one axon per miner.
+- **No vector DB service**: Miners use numpy cosine similarity in-process. Corpus fits in memory
+- **OpenRouter for LLM**: Miners call OpenRouter API for narrative generation (no GPU infrastructure). Set `OPENROUTER_API_KEY` env var
 - **KuzuDB embedded**: Graph DB runs in-process on validator/gateway pods, persisted via PVC
 - **Config via env**: All `subnet/config.py` constants overridable with `AXON_` prefix for K8s ConfigMap injection
 

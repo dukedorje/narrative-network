@@ -9,8 +9,7 @@ resources:
   - secrets.yaml
   - gateway.yaml
   - validator.yaml
-  - domain-miner.yaml
-  - narrative-miner.yaml
+  - miner.yaml
   - frontend.yaml
   - redis.yaml
   - ipfs.yaml

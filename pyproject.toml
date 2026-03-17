@@ -9,7 +9,6 @@ description = "Narrative Network — Living knowledge graph with comparative att
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bittensor>=10.1.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "openai>=1.30",
@@ -24,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bt = [
+    "bittensor>=10.1.0",
+]
 ml = [
     "onnxruntime>=1.17",
     "tokenizers>=0.19",
@@ -39,8 +41,7 @@ dev = [
 
 [project.scripts]
 narrative-validator = "subnet.validator:main"
-narrative-domain-miner = "domain.miner:main"
-narrative-miner = "domain.narrative.miner:main"
+narrative-miner = "domain.unified_miner:main"
 narrative-gateway = "orchestrator.gateway:main"
 
 [tool.hatch.build.targets.wheel]

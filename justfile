@@ -55,7 +55,7 @@ restart-frontend:
 # Deploy a Python service: just deploy-python gateway
 deploy-python service: sync (build-python service) (import-python service) (restart-python service)
 
-# Build a Python service image (gateway, validator, domain-miner, narrative-miner)
+# Build a Python service image (gateway, validator, miner)
 build-python service:
     ssh {{server}} "cd ~/narrative-network && docker build --no-cache -f Dockerfile.python --target {{service}} -t narrative-network-{{service}}:latest ."
 
@@ -68,11 +68,67 @@ restart-python service:
     kubectl -n {{namespace}} rollout restart deployment/{{service}}
     kubectl -n {{namespace}} rollout status deployment/{{service}} --timeout=90s
 
+# ── Full Deploy ──────────────────────────────────────────────────────
+
+# Deploy everything to prod: sync, parallel builds, import, apply, restart
+deploy-all: sync _build-all _import-all apply _restart-all
+    @echo "✓ All services deployed."
+
+# Build all images on server in parallel
+_build-all:
+    #!/usr/bin/env bash
+    set -e
+    echo "Building all images in parallel on {{server}}..."
+    ssh {{server}} "cd ~/narrative-network && \
+        docker build --no-cache -f Dockerfile.python --target gateway -t narrative-network-gateway:latest . & \
+        docker build --no-cache -f Dockerfile.python --target validator -t narrative-network-validator:latest . & \
+        docker build --no-cache -f Dockerfile.python --target miner -t narrative-network-miner:latest . & \
+        docker build --no-cache -f Dockerfile.frontend -t narrative-network-frontend:latest . & \
+        wait"
+    echo "All images built."
+
+# Import all images into k3s
+_import-all:
+    #!/usr/bin/env bash
+    set -e
+    echo "Importing images into k3s..."
+    for svc in gateway validator miner frontend; do
+        ssh {{server}} "docker save narrative-network-${svc}:latest | k3s ctr images import -"
+    done
+    echo "All images imported."
+
+# Restart all deployments
+_restart-all:
+    #!/usr/bin/env bash
+    set -e
+    for svc in frontend gateway miner; do
+        kubectl -n {{namespace}} rollout restart deployment/${svc}
+    done
+    kubectl -n {{namespace}} rollout restart statefulset/validator
+    echo "Waiting for rollouts..."
+    for svc in frontend gateway miner; do
+        kubectl -n {{namespace}} rollout status deployment/${svc} --timeout=120s
+    done
+    kubectl -n {{namespace}} rollout status statefulset/validator --timeout=120s
+    echo "All services restarted."
+
 # ── Local Dev ────────────────────────────────────────────────────────
 
 # Run the Python gateway locally (no Bittensor, in-process miners)
 gateway:
     AXON_NETWORK=local uv run uvicorn orchestrator.gateway:app --host 0.0.0.0 --port 8080 --reload
+
+# ── Docker Compose (local, no bittensor) ──────────────────────────────
+# Quick local dev: gateway + local-validator + frontend + redis
+# No Kind cluster, no bittensor dependency
+compose:
+    docker compose -f docker-compose.local.yml up --build
+
+compose-down:
+    docker compose -f docker-compose.local.yml down -v
+
+compose-logs service="gateway":
+    docker compose -f docker-compose.local.yml logs -f {{service}}
 
 # ── Local K8s (kind) ────────────────────────────────────────────────
 
@@ -104,17 +160,15 @@ _local-cluster:
 
 # Build all local images
 _local-build:
-    docker build -f Dockerfile.python --target gateway -t narrative-network-gateway:latest .
-    docker build -f Dockerfile.python --target domain-miner -t narrative-network-domain-miner:latest .
-    docker build -f Dockerfile.python --target narrative-miner -t narrative-network-narrative-miner:latest .
+    docker build -f Dockerfile.python --target gateway-local -t narrative-network-gateway-local:latest .
+    docker build -f Dockerfile.python --target local-validator -t narrative-network-local-validator:latest .
     docker build -f Dockerfile.frontend -t narrative-network-frontend:latest .
 
 # Load images into kind
 _local-load:
     kind load docker-image --name {{kind_cluster}} \
-        narrative-network-gateway:latest \
-        narrative-network-domain-miner:latest \
-        narrative-network-narrative-miner:latest \
+        narrative-network-gateway-local:latest \
+        narrative-network-local-validator:latest \
         narrative-network-frontend:latest
 
 # Create secrets from .env (idempotent)
@@ -143,6 +197,7 @@ _local-deploy:
     @echo "Waiting for rollouts..."
     kubectl -n {{namespace}} rollout status deployment/frontend --timeout=120s
     kubectl -n {{namespace}} rollout status deployment/gateway --timeout=300s
+    kubectl -n {{namespace}} rollout status deployment/local-validator --timeout=120s
 
 # Show local cluster status
 local-status:

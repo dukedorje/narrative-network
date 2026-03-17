@@ -5,8 +5,8 @@ UnbrowseClient fetches live web context from unbrowse.ai to supplement
 in-graph knowledge.
 
 Integration points:
-- DomainMiner._forward: corpus fallback when domain_similarity < UNBROWSE_CORPUS_THRESHOLD
-- NarrativeMiner._forward: enrich hop context with live web snippets
+- Miner._forward_kq: corpus fallback when domain_similarity < UNBROWSE_CORPUS_THRESHOLD
+- Miner._forward_nh: enrich hop context with live web snippets
 - IntegrationManager.enqueue: pre-fetch node enrichment during foreshadowing
 - ProposalSubmitter.submit: validate domain coverage for ADD_NODE proposals
 - Gateway POST /enter: ground query when no miner responds adequately

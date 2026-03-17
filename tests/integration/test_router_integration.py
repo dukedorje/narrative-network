@@ -1,6 +1,6 @@
 """Integration tests for Router with mock metagraph.
 
-Tests rank_entry_nodes() and resolve_narrative_miner() using MockMetagraph
+Tests rank_entry_nodes() and resolve_miner() using MockMetagraph
 and MockAxonInfo from conftest.py.
 
 Usage:
@@ -69,12 +69,12 @@ def test_rank_entry_nodes_filters_none_node_id(graph_store, mock_metagraph):
 
 
 # ---------------------------------------------------------------------------
-# resolve_narrative_miner
+# resolve_miner
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_narrative_miner_returns_highest_stake(graph_store):
-    """resolve_narrative_miner returns the axon with the highest stake."""
+def test_resolve_miner_returns_highest_stake(graph_store):
+    """resolve_miner returns the axon with the highest stake."""
     from orchestrator.router import Router
 
     metagraph = MockMetagraph(
@@ -84,7 +84,7 @@ def test_resolve_narrative_miner_returns_highest_stake(graph_store):
     )
 
     router = Router(graph_store=graph_store, metagraph=metagraph)
-    result = router.resolve_narrative_miner(destination_node_id="node-0")
+    result = router.resolve_miner(destination_node_id="node-0")
 
     assert result is not None
     # UID 0 has stake 1000.0 — its axon ip should be the default serving ip
@@ -92,7 +92,7 @@ def test_resolve_narrative_miner_returns_highest_stake(graph_store):
     assert result.uid == 0
 
 
-def test_resolve_narrative_miner_skips_non_serving(graph_store):
+def test_resolve_miner_skips_non_serving(graph_store):
     """Axons with ip='0.0.0.0' are skipped; highest-stake serving axon is returned."""
     from orchestrator.router import Router
 
@@ -101,14 +101,14 @@ def test_resolve_narrative_miner_skips_non_serving(graph_store):
     metagraph.axons[0] = MockAxonInfo(ip="0.0.0.0", port=8091, uid=0)
 
     router = Router(graph_store=graph_store, metagraph=metagraph)
-    result = router.resolve_narrative_miner(destination_node_id="node-0")
+    result = router.resolve_miner(destination_node_id="node-0")
 
     assert result is not None
     # UID 0 is skipped; next highest stake is UID 2 (200.0)
     assert result.uid == 2
 
 
-def test_resolve_narrative_miner_empty_metagraph(graph_store):
+def test_resolve_miner_empty_metagraph(graph_store):
     """Returns None when all axons have ip='0.0.0.0' (none are serving)."""
     from orchestrator.router import Router
 
@@ -117,6 +117,6 @@ def test_resolve_narrative_miner_empty_metagraph(graph_store):
         metagraph.axons[i] = MockAxonInfo(ip="0.0.0.0", port=8091, uid=i)
 
     router = Router(graph_store=graph_store, metagraph=metagraph)
-    result = router.resolve_narrative_miner(destination_node_id="node-0")
+    result = router.resolve_miner(destination_node_id="node-0")
 
     assert result is None
