@@ -1,202 +1,173 @@
 <script lang="ts">
-	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
+	import { fly, fade } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
+	import { goto } from '$app/navigation';
 
-	let { data } = $props();
-
-	// ── Explore mode state ──────────────────────────────────────────────────
-
-	// eslint-disable-next-line svelte/valid-compile -- intentional one-time capture
-	let searchQuery = $state(data.query ?? '');
-	let searchEntities = $state<typeof data.entities | null>(null);
-	let searchEdges = $state<typeof data.edges | null>(null);
-	let searchEpisodes = $state<typeof data.episodes | null>(null);
-	let entities = $derived(searchEntities ?? data.entities);
-	let edges = $derived(searchEdges ?? data.edges);
-	let episodes = $derived(searchEpisodes ?? data.episodes);
+	let searchQuery = $state('');
 	let loading = $state(false);
-	let selectedNode = $state<{ uuid: string; name: string } | null>(null);
-	let expandedNodes = $state<
-		Array<{ uuid: string; name: string; node_type: string; summary?: string }>
-	>([]);
-	let expandedEdges = $state<
-		Array<{
-			uuid: string;
-			edge_type: string;
-			source_node_uuid: string;
-			target_node_uuid: string;
-			fact?: string | null;
-		}>
-	>([]);
 
-	async function handleSearch(e: SubmitEvent) {
+	const suggestedQueries = [
+		{ label: 'quantum entanglement', color: '#6ee7b7' },
+		{ label: 'emergence of consciousness', color: '#93c5fd' },
+		{ label: 'stellar nucleosynthesis', color: '#fbbf24' },
+		{ label: 'deep ocean ecosystems', color: '#67e8f9' },
+		{ label: 'artificial general intelligence', color: '#c084fc' },
+		{ label: 'the history of cryptography', color: '#f472b6' },
+		{ label: 'symbiotic relationships in nature', color: '#86efac' },
+		{ label: 'time dilation near black holes', color: '#a5b4fc' }
+	];
+
+	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!searchQuery.trim()) return;
-		loading = true;
-		selectedNode = null;
-
-		try {
-			const res = await fetch('/api/graph/delve', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ query: searchQuery, numResults: 30 })
-			});
-			const result = await res.json();
-			searchEntities = result.entities ?? [];
-			searchEdges = result.edges ?? [];
-			searchEpisodes = (result.episodes ?? []).slice(0, 10);
-			expandedNodes = [];
-			expandedEdges = [];
-		} catch (err) {
-			console.error('Search failed:', err);
-		} finally {
-			loading = false;
-		}
+		goto(`/traverse?q=${encodeURIComponent(searchQuery.trim())}`);
 	}
 
-	async function handleNodeClick(uuid: string, name: string) {
-		selectedNode = { uuid, name };
-		loading = true;
-
-		try {
-			const res = await fetch('/api/graph/expand', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ entityUuid: uuid, limit: 20 })
-			});
-			const result = await res.json();
-			if (result.success) {
-				const existingUuids = new Set(entities.map((e) => e.uuid));
-				const newEntities = (result.nodes ?? []).filter(
-					(n: { uuid: string }) => !existingUuids.has(n.uuid)
-				);
-				expandedNodes = newEntities;
-				expandedEdges = result.edges ?? [];
-			}
-		} catch (err) {
-			console.error('Expand failed:', err);
-		} finally {
-			loading = false;
-		}
+	function pickSuggestion(label: string) {
+		goto(`/traverse?q=${encodeURIComponent(label)}`);
 	}
-
-	let allEntities = $derived([...entities, ...expandedNodes]);
-	let allEdges = $derived([...edges, ...expandedEdges]);
 </script>
 
-<div class="explorer">
-	<section class="search-panel">
-		<div class="panel-inner">
-			<form onsubmit={handleSearch} class="search-form">
-				<input
-					type="text"
-					bind:value={searchQuery}
-					placeholder="Search the knowledge graph..."
-					class="search-input"
-				/>
-				<button type="submit" class="search-btn" disabled={loading}>
-					{loading ? '...' : 'Delve'}
-				</button>
-			</form>
-			<div class="stats">
-				<span>{allEntities.length} entities</span>
-				<span>{allEdges.length} edges</span>
-				<span>{episodes.length} episodes</span>
+<div class="splash">
+	<section class="hero" in:fade={{ duration: 500 }}>
+		<div class="hero-badge">Bittensor Subnet 42</div>
+		<h1 class="hero-title">Narrative Network</h1>
+		<p class="hero-subtitle">Navigate a living knowledge graph. Miners compete to narrate your journey.</p>
+	</section>
+
+	<section class="action-zone" in:fly={{ y: 20, duration: 500, delay: 150, easing: cubicOut }}>
+		<form onsubmit={handleSubmit} class="search-form">
+			<input
+				type="text"
+				bind:value={searchQuery}
+				placeholder="Ask anything — enter the graph..."
+				class="search-input"
+			/>
+			<button type="submit" class="search-btn" disabled={!searchQuery.trim()}>
+				Enter the Graph
+			</button>
+		</form>
+
+		<div class="suggestions">
+			<span class="suggest-label">Try something:</span>
+			<div class="suggest-grid">
+				{#each suggestedQueries as { label, color }, i}
+					<button
+						class="suggest-chip"
+						style="--chip-color: {color};"
+						onclick={() => pickSuggestion(label)}
+						in:fly={{ y: 16, duration: 350, delay: 250 + i * 60, easing: cubicOut }}
+					>
+						{label}
+					</button>
+				{/each}
 			</div>
 		</div>
 	</section>
 
-	<section class="graph-panel">
-		<GraphCanvas entities={allEntities} edges={allEdges} onNodeClick={handleNodeClick} />
-	</section>
-
-	<section class="info-panel">
-		{#if selectedNode}
-			<div class="selected-node">
-				<h3>{selectedNode.name}</h3>
-				{#if expandedNodes.length > 0}
-					<p class="expand-info">
-						+{expandedNodes.length} connected nodes, {expandedEdges.length} edges
-					</p>
-				{/if}
-			</div>
-		{/if}
-
-		{#if episodes.length > 0}
-			<div class="episodes">
-				<h3>Episodes</h3>
-				{#each episodes as ep}
-					<div class="episode-card">
-						<h4>{ep.name}</h4>
-						{#if ep.content?.content}
-							<p>{ep.content.content.slice(0, 200)}...</p>
-						{/if}
-						<time>{new Date(ep.created_at).toLocaleDateString()}</time>
-					</div>
-				{/each}
-			</div>
-		{/if}
-
-		{#if entities.length > 0}
-			<div class="entity-list">
-				<h3>Entities</h3>
-				{#each entities as entity}
-					<button class="entity-chip" onclick={() => handleNodeClick(entity.uuid, entity.name)}>
-						{entity.name}
-					</button>
-				{/each}
-			</div>
-		{/if}
+	<section class="secondary-actions" in:fade={{ duration: 400, delay: 800 }}>
+		<a href="/explore" class="secondary-link">
+			<span class="secondary-icon">&#x25C7;</span>
+			<span>
+				<strong>Explore the Graph</strong>
+				<small>Search entities, visualize connections</small>
+			</span>
+		</a>
+		<a href="/traverse" class="secondary-link">
+			<span class="secondary-icon">&#x25C8;</span>
+			<span>
+				<strong>Open Traverse</strong>
+				<small>Start a freeform traversal session</small>
+			</span>
+		</a>
 	</section>
 </div>
 
 <style>
-	.explorer {
+	.splash {
 		flex: 1;
-		display: grid;
-		grid-template-rows: auto 1fr;
-		grid-template-columns: 1fr 320px;
-		gap: 0;
-		height: calc(100vh - 65px);
-	}
-
-	/* ── Search panel ──────────────────────────────────────────────────────── */
-
-	.search-panel {
-		grid-column: 1 / -1;
-		padding: 12px 24px;
-		border-bottom: 1px solid #1e293b;
-		background: #0f172a;
-	}
-
-	.panel-inner {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 16px;
-		flex-wrap: wrap;
+		overflow-y: auto;
+		scroll-behavior: smooth;
 	}
 
-	/* ── Explore search form ───────────────────────────────────────────────── */
+	/* ── Hero ──────────────────────────────────────────────────────────── */
+
+	.hero {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		padding: 72px 24px 32px;
+		gap: 14px;
+	}
+
+	.hero-badge {
+		font-size: 11px;
+		color: #6ee7b7;
+		text-transform: uppercase;
+		letter-spacing: 0.14em;
+		padding: 5px 14px;
+		background: rgba(110, 231, 183, 0.08);
+		border: 1px solid rgba(110, 231, 183, 0.2);
+		border-radius: 20px;
+	}
+
+	.hero-title {
+		font-size: 60px;
+		font-weight: 800;
+		letter-spacing: -0.03em;
+		margin: 0;
+		line-height: 1.05;
+		background: linear-gradient(135deg, #e2e8f0 0%, #6ee7b7 100%);
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+		background-clip: text;
+	}
+
+	.hero-subtitle {
+		font-size: 17px;
+		color: #94a3b8;
+		margin: 0;
+		max-width: 480px;
+		line-height: 1.5;
+	}
+
+	/* ── Action zone ───────────────────────────────────────────────────── */
+
+	.action-zone {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 32px;
+		padding: 16px 24px 48px;
+		max-width: 720px;
+		width: 100%;
+	}
 
 	.search-form {
 		display: flex;
 		gap: 8px;
-		flex: 1;
+		width: 100%;
 	}
 
 	.search-input {
 		flex: 1;
-		padding: 10px 16px;
+		padding: 14px 20px;
 		background: #1e293b;
 		border: 1px solid #334155;
-		border-radius: 8px;
+		border-radius: 10px;
 		color: #e2e8f0;
-		font-size: 15px;
+		font-size: 16px;
 		outline: none;
-		transition: border-color 0.2s;
+		transition: border-color 0.2s, box-shadow 0.2s;
 	}
 
 	.search-input:focus {
 		border-color: #6ee7b7;
+		box-shadow: 0 0 0 3px rgba(110, 231, 183, 0.12);
 	}
 
 	.search-input::placeholder {
@@ -204,109 +175,117 @@
 	}
 
 	.search-btn {
-		padding: 10px 24px;
+		padding: 14px 28px;
 		background: #059669;
 		color: white;
 		border: none;
-		border-radius: 8px;
+		border-radius: 10px;
 		font-weight: 600;
+		font-size: 15px;
 		cursor: pointer;
-		transition: background 0.2s;
 		white-space: nowrap;
+		transition: background 0.2s, transform 0.15s;
 	}
 
-	.search-btn:hover {
+	.search-btn:hover:not(:disabled) {
 		background: #047857;
+		transform: translateY(-1px);
 	}
 
 	.search-btn:disabled {
-		opacity: 0.5;
-		cursor: wait;
+		opacity: 0.4;
+		cursor: default;
 	}
 
-	.stats {
+	/* ── Suggestions ───────────────────────────────────────────────────── */
+
+	.suggestions {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 14px;
+	}
+
+	.suggest-label {
+		font-size: 14px;
+		color: #475569;
+		font-weight: 500;
+	}
+
+	.suggest-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		justify-content: center;
+		max-width: 640px;
+	}
+
+	.suggest-chip {
+		padding: 10px 20px;
+		background: rgba(30, 41, 59, 0.8);
+		border: 1px solid #334155;
+		border-radius: 24px;
+		color: var(--chip-color, #93c5fd);
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.18s ease-out;
+		font-weight: 500;
+	}
+
+	.suggest-chip:hover {
+		background: rgba(30, 41, 59, 1);
+		border-color: var(--chip-color, #6ee7b7);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	}
+
+	/* ── Secondary actions ─────────────────────────────────────────────── */
+
+	.secondary-actions {
 		display: flex;
 		gap: 16px;
-		font-size: 13px;
-		color: #64748b;
+		padding: 24px 24px 80px;
+		flex-wrap: wrap;
+		justify-content: center;
 	}
 
-	/* ── Explore mode panels ───────────────────────────────────────────────── */
-
-	.graph-panel {
-		overflow: hidden;
-	}
-
-	.info-panel {
-		border-left: 1px solid #1e293b;
+	.secondary-link {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 18px 24px;
 		background: #0f172a;
-		overflow-y: auto;
-		padding: 16px;
+		border: 1px solid #1e293b;
+		border-radius: 12px;
+		text-decoration: none;
+		color: #e2e8f0;
+		transition: border-color 0.2s, background 0.2s, transform 0.15s;
+		min-width: 260px;
 	}
 
-	.selected-node h3 {
-		font-size: 16px;
+	.secondary-link:hover {
+		border-color: #334155;
+		background: #111c32;
+		transform: translateY(-1px);
+	}
+
+	.secondary-icon {
+		font-size: 24px;
 		color: #6ee7b7;
-		margin: 0 0 8px;
+		flex-shrink: 0;
 	}
 
-	.expand-info {
+	.secondary-link strong {
+		display: block;
+		font-size: 15px;
+		font-weight: 600;
+		color: #e2e8f0;
+	}
+
+	.secondary-link small {
+		display: block;
 		font-size: 13px;
 		color: #64748b;
-		margin: 0 0 16px;
-	}
-
-	.episodes h3,
-	.entity-list h3 {
-		font-size: 14px;
-		color: #94a3b8;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin: 16px 0 8px;
-	}
-
-	.episode-card {
-		background: #1e293b;
-		border-radius: 8px;
-		padding: 12px;
-		margin-bottom: 8px;
-	}
-
-	.episode-card h4 {
-		font-size: 13px;
-		color: #e2e8f0;
-		margin: 0 0 6px;
-		line-height: 1.3;
-	}
-
-	.episode-card p {
-		font-size: 12px;
-		color: #94a3b8;
-		margin: 0 0 6px;
-		line-height: 1.4;
-	}
-
-	.episode-card time {
-		font-size: 11px;
-		color: #475569;
-	}
-
-	.entity-chip {
-		display: inline-block;
-		padding: 4px 12px;
-		background: #1e293b;
-		border: 1px solid #334155;
-		border-radius: 16px;
-		color: #93c5fd;
-		font-size: 12px;
-		margin: 0 4px 6px 0;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.entity-chip:hover {
-		background: #334155;
-		border-color: #6ee7b7;
-		color: #6ee7b7;
+		margin-top: 2px;
 	}
 </style>

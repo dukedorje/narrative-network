@@ -13,20 +13,22 @@
 
 <div class="app">
 	<header>
-		<a href="/" class="logo">
-			<span class="logo-icon">◈</span>
-			<span class="logo-text">Narrative Network</span>
-		</a>
-		<nav>
-			<a href="/" class="nav-link" class:active={page.url.pathname === '/'}>
-				<span class="nav-icon">&#x25C7;</span>
-				Explorer
+		<div class="header-left">
+			<a href="/" class="logo">
+				<span class="logo-icon">◈</span>
+				<span class="logo-text">Narrative Network</span>
 			</a>
-			<a href="/traverse" class="nav-link" class:active={page.url.pathname === '/traverse'}>
-				<span class="nav-icon">&#x25C8;</span>
-				Traverse
-			</a>
-		</nav>
+			<nav>
+				<a href="/traverse" class="nav-link" class:active={page.url.pathname === '/traverse'}>
+					<span class="nav-icon">{page.url.pathname === '/traverse' ? '◆' : '◇'}</span>
+					Traverse
+				</a>
+				<a href="/explore" class="nav-link" class:active={page.url.pathname === '/explore'}>
+					<span class="nav-icon">{page.url.pathname === '/explore' ? '◆' : '◇'}</span>
+					Explore
+				</a>
+			</nav>
+		</div>
 	</header>
 
 	<main>
@@ -46,10 +48,15 @@
 	header {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		padding: 16px 24px;
 		border-bottom: 1px solid #1e293b;
 		background: #0f172a;
+	}
+
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 24px;
 	}
 
 	.logo {
