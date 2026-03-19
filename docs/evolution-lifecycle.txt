@@ -1,0 +1,144 @@
+
+  NARRATIVE NETWORK — EVOLUTION / INTEGRATION LIFECYCLE
+  =====================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  1. PROPOSAL                                                       │
+  │                                                                     │
+  │    DRAFT ──submit()──► SUBMITTED                                    │
+  │            bond locked    commitment on-chain                       │
+  │            NLA drafted    (min 1.0 TAO bond)                        │
+  └────────────────────────────────┬────────────────────────────────────┘
+                                   │ register for voting
+                                   ▼
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  2. VOTING                          window: 7200 blocks (~24h)     │
+  │                                                                     │
+  │    Validators cast stake-weighted votes: FOR / AGAINST / ABSTAIN    │
+  │                                                                     │
+  │    ┌─────────┐     quorum ≥ 10%      ┌──────────┐                  │
+  │    │ VOTING  │──── AND FOR ≥ 60% ───►│ ACCEPTED │──────────┐       │
+  │    │         │                        └──────────┘          │       │
+  │    │         │     quorum not met     ┌──────────┐          │       │
+  │    │         │──── OR FOR < 60% ────►│ REJECTED │──┐       │       │
+  │    └─────────┘                        └──────────┘  │       │       │
+  └─────────────────────────────────────────────────────┼───────┼───────┘
+                                                        │       │
+                                    bond burned ◄───────┘       │ enqueue
+                                    via NLA                     │
+                                                                ▼
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  3. INTEGRATION                                                     │
+  │                                                                     │
+  │    FORESHADOW ─────► BRIDGE ─────► RAMP ──────► LIVE               │
+  │    │                  │             │             │                  │
+  │    │ ~6h incubation   │ immediate   │ ~2h ramp    │ fully active    │
+  │    │ miners preload   │ node added  │ weight:     │ weight = 1.0    │
+  │    │ edge wt = 0.0    │ to graph    │ 0.0 → 1.0  │ bond returned   │
+  │    │ unbrowse fetch   │ wt = 0.0    │ (linear)    │                 │
+  │    │                  │             │             │                  │
+  │    │  EXEMPT FROM PRUNING ◄─────────┤             │                 │
+  │    │                                │             │                  │
+  │    │                     ┌──────────┴──────────┐  │                  │
+  │    │                     │ at ramp end:        │  │                  │
+  │    │                     │                     │  │                  │
+  │    │                     │ score ≥ 0.50? ──YES─┼──┘                  │
+  │    │                     │        │            │                     │
+  │    │                     │        NO           │                     │
+  │    │                     │        │            │                     │
+  │    │                     │  extensions < 3?    │                     │
+  │    │                     │   YES → extend ramp │                     │
+  │    │                     │   NO  → collapse ───┼──► bond burned      │
+  │    │                     └─────────────────────┘                     │
+  └────────────────────────────────────────────────┬────────────────────┘
+                                                   │ register with
+                                                   │ pruning engine
+                                                   ▼
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  4. PRUNING (ongoing monitoring)                                    │
+  │                                                                     │
+  │    Rolling window: 720 epochs (~12h)   Checked every 10 epochs      │
+  │                                                                     │
+  │    ┌─────────┐  mean < 0.35  ┌─────────┐  mean < 0.20  ┌────────┐ │
+  │    │ HEALTHY │──────────────►│ WARNING │──────────────►│DECAYING│ │
+  │    │         │◄──────────────│         │◄──────────────│        │ │
+  │    └─────────┘  mean ≥ 0.35  └─────────┘  mean ≥ 0.35  └───┬────┘ │
+  │                  (recovery)                (recovery)        │      │
+  │                                                             │      │
+  │                                          24 consecutive     │      │
+  │                                          epochs below 0.20  │      │
+  │                                                             ▼      │
+  │                                                      ┌───────────┐ │
+  │                                                      │ COLLAPSED │ │
+  │                                                      └─────┬─────┘ │
+  └────────────────────────────────────────────────────────────┼───────┘
+                                                               │
+                                                               ▼
+                                                     node removed from
+                                                     graph + bond burned
+                                                     via NLA settlement
+
+
+  ═══════════════════════════════════════════════════════════════════════
+
+  BOND LIFECYCLE (Arkhai NLA / Alkahest Protocol)
+  ───────────────────────────────────────────────
+
+    proposal submitted ──► NLA agreement drafted (escrow terms)
+                           │
+           voting opens ──► NLA registered on-chain (EAS attestation)
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+          ACCEPTED                  REJECTED
+              │                         │
+         bond RETURNED             bond BURNED
+         to proposer               to treasury
+              │                         │
+              ▼                         ▼
+         NLA settled               NLA settled
+         (fulfillment UID)         (fulfillment UID)
+
+
+  ═══════════════════════════════════════════════════════════════════════
+
+  VALIDATOR EPOCH LOOP (every 60s)
+  ────────────────────────────────
+
+    1. Resync metagraph
+    2. Register miner manifests (node discovery)
+    3. Challenge miners on 4 axes:
+       ├── Corpus integrity  (Merkle proof verification)
+       ├── Traversal         (embedding similarity + latency)
+       ├── Quality           (narrative passage + choice fairness)
+       └── Topology          (betweenness centrality + edge weight)
+    4. Aggregate via EmissionCalculator:
+       ├── Traversal pool  40%  (linear normalization)
+       ├── Quality pool    35%  (softmax)
+       └── Topology pool   25%  (rank normalization)
+    5. Set weights (Yuma Consensus)
+    6. Decay edges (multiplicative, half-life ~1.2 days)
+    7. Pruning: push scores + process collapses (every 10 epochs)
+    8. Voting: finalize expired proposals + return/burn bonds
+    9. Integration: advance ramp-in nodes + register newly-live
+
+
+  ═══════════════════════════════════════════════════════════════════════
+
+  CONFIGURATION (subnet/config.py, overridable via AXON_ prefix)
+  ──────────────────────────────────────────────────────────────
+
+    Proposal     PROPOSAL_MIN_BOND_TAO          1.0 TAO
+    Voting       VOTING_OPEN_BLOCKS             7200 (~24h)
+                 VOTING_QUORUM_RATIO            0.10 (10%)
+                 VOTING_PASS_RATIO              0.60 (60%)
+    Integration  INCUBATION_BLOCKS              1800 (~6h)
+                 INTEGRATION_BLOCKS             600  (~2h)
+                 INTEGRATION_MIN_SCORE          0.50
+                 INTEGRATION_MAX_RAMP_EXTENSIONS 3
+    Pruning      PRUNING_EPOCH_INTERVAL         10 epochs (~10min)
+                 window_size                    720 epochs (~12h)
+                 warning_threshold              0.35
+                 decay_threshold                0.20
+                 collapse_consecutive           24 epochs (~24min)
+                 PRUNING_MIN_TRAVERSALS         5

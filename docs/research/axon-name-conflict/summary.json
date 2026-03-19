@@ -1,0 +1,44 @@
+{
+  "question": "Who else is using the name 'Axon' for their product, and are any of them in markets adjacent to a decentralized AI/blockchain knowledge graph network?",
+  "mode": "quick",
+  "status": "complete",
+  "confidence": "high",
+  "executive_summary": "The 'Axon' name is heavily occupied across tech, AI, and blockchain. At least 6 crypto projects use 'Axon' or 'AXON' including one with nearly identical positioning to a Bittensor subnet. Axon Enterprise (NASDAQ: AXON, ~$40-46B market cap) holds 575+ trademarks, is building AI products and an 'Entity Graph' knowledge graph, and has an aggressive litigation posture. Multiple AI/ML platforms also claim the name, with AppLovin owning axon.ai and AxonIQ repositioning for the 'Agentic Era.' All premium domains (axon.com, axon.ai, axon.dev, axon.network) are taken. Brand confusion risk is high; trademark conflict risk with Axon Enterprise is moderate but warrants caution given their expanding AI ambitions.",
+  "key_findings": [
+    {
+      "finding": "At least 6 blockchain/crypto projects use 'Axon' or 'AXON,' including one Ethereum token with nearly identical 'decentralized AI training' positioning.",
+      "confidence": "high",
+      "sources": ["hypothesis-1-inline"]
+    },
+    {
+      "finding": "Axon Enterprise (~$40-46B market cap) holds 575+ trademarks, has an aggressive legal team, and is actively building AI products including an 'Entity Graph' knowledge graph.",
+      "confidence": "high",
+      "sources": ["hypothesis-2-inline"]
+    },
+    {
+      "finding": "The AI/ML namespace is saturated: AppLovin owns axon.ai, Elixir Axon is a published ML framework, AxonIQ (70M+ downloads) is repositioning for AI agents, and Informatica Axon already uses 'knowledge graph' framing.",
+      "confidence": "high",
+      "sources": ["hypothesis-3-inline"]
+    },
+    {
+      "finding": "All premium domains (axon.com, axon.ai, axon.dev, axon.network) are registered by other entities.",
+      "confidence": "high",
+      "sources": ["hypothesis-3-inline"]
+    },
+    {
+      "finding": "The AXON ticker is multiply claimed across NASDAQ, Solana, and Avalanche, creating token confusion risk.",
+      "confidence": "high",
+      "sources": ["hypothesis-1-inline", "hypothesis-2-inline"]
+    }
+  ],
+  "open_questions": [
+    "Would Axon Enterprise's trademarks (IC 9/42) actually cover a decentralized AI knowledge graph product? Requires trademark attorney review.",
+    "How durable are the smaller crypto 'Axon' projects? AxonDAO (NVIDIA-backed) and AxonWeb3 (1,100+ commits) appear persistent; Solana pump.fun tokens may not.",
+    "Does Bittensor's internal use of 'axon' as a technical term for server endpoints create additional naming entanglement?"
+  ],
+  "contradictions": [],
+  "hypotheses_explored": 3,
+  "hypotheses_total": 3,
+  "verification_status": "PASS",
+  "output_dir": "docs/research/axon-name-conflict"
+}

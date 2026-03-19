@@ -143,15 +143,15 @@ export const WsServerMessage = z.union([
 // ── Events: /events/stream (SSE) + /events/recent ──────────────────
 
 export const NetworkEvent = z.object({
-  event_type: z.string(),
-  source: z.string(),
-  payload: z.record(z.string(), z.unknown()),
-  correlation_id: z.string(),
-  timestamp: z.number()
+	event_type: z.string(),
+	source: z.string(),
+	payload: z.record(z.string(), z.unknown()),
+	correlation_id: z.string(),
+	timestamp: z.number()
 });
 
 export const EventsRecentResponse = z.object({
-  events: z.array(NetworkEvent)
+	events: z.array(NetworkEvent)
 });
 
 // ── Bonfires.ai: shared shapes ──────────────────────────────────────
