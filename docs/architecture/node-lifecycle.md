@@ -1,6 +1,6 @@
 # Node Lifecycle
 
-Knowledge graph nodes in the Narrative Network pass through a defined sequence of states before they serve live traffic. This document describes each state, the transitions between them, and the supporting subsystems that enforce them.
+Knowledge graph nodes in the Bittensor Knowledge Network (BKN) pass through a defined sequence of states before they serve live traffic. This document describes each state, the transitions between them, and the supporting subsystems that enforce them.
 
 ## State Machine Overview
 

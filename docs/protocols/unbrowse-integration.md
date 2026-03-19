@@ -5,7 +5,7 @@
 
 ## Overview
 
-Unbrowse serves as the data/action fallback layer for Narrative Network. When a query reaches the system that has no adequate coverage in the knowledge graph (low corpus similarity, no miner with a matching domain, or a newly proposed node that needs domain validation), Unbrowse fetches live web context to supplement in-graph knowledge.
+Unbrowse serves as the data/action fallback layer for BKN. When a query reaches the system that has no adequate coverage in the knowledge graph (low corpus similarity, no miner with a matching domain, or a newly proposed node that needs domain validation), Unbrowse fetches live web context to supplement in-graph knowledge.
 
 The `orchestrator/unbrowse.py` module provides an async HTTP client (`UnbrowseClient`) used across the stack. All calls are non-blocking — errors return empty results so the main traversal flow is never degraded by external availability.
 

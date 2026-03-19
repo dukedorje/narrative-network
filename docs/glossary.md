@@ -1,6 +1,6 @@
-# Narrative Network — Glossary
+# Bittensor Knowledge Network — Glossary
 
-Complete terminology reference for the Narrative Network Bittensor subnet.
+Complete terminology reference for the Bittensor Knowledge Network (BKN) Bittensor subnet.
 
 ---
 
@@ -54,7 +54,7 @@ Complete terminology reference for the Narrative Network Bittensor subnet.
 
 - **WeightCommit** — Dataclass for committed weight values. (`subnet/protocol.py`)
 
-- **NETUID** — Subnet ID on Bittensor mainnet. Narrative Network = 42. (`subnet/__init__.py`)
+- **NETUID** — Subnet ID on Bittensor mainnet. BKN = 42. (`subnet/__init__.py`)
 
 - **SPEC_VERSION** — Protocol version string; must match between synapse sender/receiver. (`subnet/__init__.py`)
 

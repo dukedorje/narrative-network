@@ -124,7 +124,7 @@ def resync_metagraph(self):
     self.hotkeys = copy(self.metagraph.hotkeys)
 ```
 
-### Narrative Network Validator Specifics
+### BKN Validator Specifics
 
 Our validator has additional responsibilities beyond the template:
 
@@ -204,7 +204,7 @@ def run(self):
 
 ### Unified Miner (Knowledge + Narrative)
 
-The Narrative Network uses a unified miner that serves both KnowledgeQuery and NarrativeHop from a single axon:
+BKN uses a unified miner that serves both KnowledgeQuery and NarrativeHop from a single axon:
 
 ```python
 class Miner(BaseMinerNeuron):

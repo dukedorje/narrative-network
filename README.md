@@ -1,4 +1,4 @@
-# Futograph
+# Bittensor Knowledge Network (BKN)
 
 **A living knowledge graph on Bittensor where traversal is the thinking.**
 
@@ -6,7 +6,7 @@
 
 ---
 
-Futograph is a Bittensor subnet that maintains a living knowledge graph — one that grows, forgets, and evolves through the paths taken through it. Miners register as knowledge domain nodes, serve grounded retrieval and narrative authoring, and compete for TAO emission by producing high-quality traversal experiences. Validators score responses comparatively, maintain graph topology, and commit consensus weights to chain.
+Bittensor Knowledge Network (BKN) is a Bittensor subnet that maintains a living knowledge graph — one that grows, forgets, and evolves through the paths taken through it. Miners register as knowledge domain nodes, serve grounded retrieval and narrative authoring, and compete for TAO emission by producing high-quality traversal experiences. Validators score responses comparatively, maintain graph topology, and commit consensus weights to chain.
 
 The network doesn't store knowledge. It *simulates* knowledge through traversal. Every path a user takes reinforces the edges walked and lets untraveled paths decay — producing, over time, the network's best theory of how domains of understanding relate to each other.
 

@@ -1,4 +1,4 @@
-# Narrative Network — Bittensor Subnet
+# Bittensor Knowledge Network (BKN) — Bittensor Subnet
 
 ## A Living Knowledge Graph with Comparative Attestation
 
@@ -8,7 +8,7 @@
 
 **Who pays for output and why?**
 
-Narrative Network produces **AI-narrated knowledge traversals** — interactive sessions where users explore a living knowledge graph, with miners competing to generate the highest-quality narrative passages at each hop. This creates a novel product at the intersection of knowledge discovery, education, and interactive storytelling.
+BKN produces **AI-narrated knowledge traversals** — interactive sessions where users explore a living knowledge graph, with miners competing to generate the highest-quality narrative passages at each hop. This creates a novel product at the intersection of knowledge discovery, education, and interactive storytelling.
 
 ### The Output Buyers
 
@@ -16,11 +16,11 @@ Narrative Network produces **AI-narrated knowledge traversals** — interactive 
 
 **Application Developers:** The gateway exposes a clean REST + WebSocket API (`POST /enter`, `POST /hop`, `WS /session/{id}/live`, `GET /graph/nodes`, `POST /graph/search`) enabling third-party apps to build on the knowledge graph. Any application needing structured, quality-scored knowledge retrieval with narrative context can consume the subnet's output.
 
-**The Bittensor Ecosystem:** Narrative Network demonstrates a new primitive — **comparative attestation** — where multiple miners independently narrate the same traversal hop, and validators score them on 4 orthogonal axes. This creates a marketplace for knowledge quality that doesn't exist in traditional search or RAG pipelines.
+**The Bittensor Ecosystem:** BKN demonstrates a new primitive — **comparative attestation** — where multiple miners independently narrate the same traversal hop, and validators score them on 4 orthogonal axes. This creates a marketplace for knowledge quality that doesn't exist in traditional search or RAG pipelines.
 
 ### Why This Demand Is Real
 
-- **Knowledge graphs are the missing layer for LLMs.** RAG retrieval returns chunks; Narrative Network returns *journeys* through interconnected domains with quality-scored, corpus-grounded narratives.
+- **Knowledge graphs are the missing layer for LLMs.** RAG retrieval returns chunks; BKN returns *journeys* through interconnected domains with quality-scored, corpus-grounded narratives.
 - **Interactive exploration > static answers.** Users choose their path through branching choice cards (2-4 per hop), creating personalized learning trajectories.
 - **Verified provenance.** Every corpus chunk is Merkle-proof verified (SHA-256 binary tree). Users can trust that narratives are grounded in attested source material, not hallucinated.
 - **The graph evolves.** Edges strengthen with quality traversals and decay without use (0.995x per epoch). Popular, high-quality paths grow; stale paths fade. The knowledge graph is a living organism shaped by collective intelligence.
@@ -39,7 +39,7 @@ The SvelteKit 5 frontend provides two modes:
 
 ### Operational Costs Are Minimal
 
-Narrative Network is designed for capital efficiency:
+BKN is designed for capital efficiency:
 
 | Component | Resource Profile | Cost Driver |
 |-----------|-----------------|-------------|
@@ -376,7 +376,7 @@ Ingress configured for **futograph.online** with Let's Encrypt TLS — live depl
 
 ## Summary
 
-Narrative Network is a **production-ready, sovereign knowledge graph** on Bittensor Subnet that:
+BKN is a **production-ready, sovereign knowledge graph** on Bittensor Subnet that:
 
 1. **Creates real demand** — interactive AI-narrated knowledge traversals that improve over time
 2. **Sustains itself** — minimal operational costs (no GPU, no vector DB), multiple revenue paths, self-reinforcing quality economics

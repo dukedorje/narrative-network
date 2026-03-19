@@ -1,4 +1,4 @@
-# Narrative Network
+# Bittensor Knowledge Network (BKN)
 
 **The network that thinks by being traversed.**
 

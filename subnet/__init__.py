@@ -1,4 +1,4 @@
-"""Narrative Network — Bittensor Subnet.
+"""Bittensor Knowledge Network — Bittensor Subnet.
 
 Core subnet modules: protocol definitions, validator, graph store.
 """

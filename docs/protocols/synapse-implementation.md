@@ -37,7 +37,7 @@ class MyProtocol(bt.Synapse):
 
 ---
 
-## Narrative Network Synapses
+## BKN Synapses
 
 ### KnowledgeQuery
 

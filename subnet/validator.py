@@ -1,4 +1,4 @@
-"""Narrative Network validator.
+"""Bittensor Knowledge Network validator.
 
 Scores miners on four axes (traversal, quality, topology, corpus),
 sets weights independently via Yuma Consensus. No custom BFT quorum.

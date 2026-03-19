@@ -1,4 +1,4 @@
-# Narrative Network — Product Requirements Document
+# Bittensor Knowledge Network — Product Requirements Document
 
 **Subnet:** Bittensor (subnet ID TBD)
 **Status:** Pre-alpha / Architecture
@@ -8,7 +8,7 @@
 
 ## 1. Product Overview
 
-The Narrative Network is a Bittensor subnet that creates and maintains a **living knowledge graph** — one that grows, forgets, and evolves through the paths taken through it. Miners register as knowledge domain nodes, serve chunk retrieval and narrative authoring, and compete for TAO emission by producing high-quality traversal experiences. Validators score responses comparatively, maintain graph topology, and commit consensus weights to chain.
+Bittensor Knowledge Network (BKN) is a Bittensor subnet that creates and maintains a **living knowledge graph** — one that grows, forgets, and evolves through the paths taken through it. Miners register as knowledge domain nodes, serve chunk retrieval and narrative authoring, and compete for TAO emission by producing high-quality traversal experiences. Validators score responses comparatively, maintain graph topology, and commit consensus weights to chain.
 
 The network is designed to be **general-purpose** — while initially bootstrapped from an existing knowledge graph system (bonfires.ai), the architecture supports any knowledge graph representation.
 

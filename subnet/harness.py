@@ -1,4 +1,4 @@
-"""Reusable offline harness for Narrative Network.
+"""Reusable offline harness for Bittensor Knowledge Network.
 
 Provides mock Bittensor infrastructure (metagraph, wallet, subtensor, dendrite)
 that can be used by tests, local dev mode, and offline validation.

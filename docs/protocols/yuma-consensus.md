@@ -162,7 +162,7 @@ Rewards precise consensus alignment.
 
 ---
 
-## Implications for Narrative Network
+## Implications for Bittensor Knowledge Network
 
 ### Our Scoring Maps to Weight Setting
 

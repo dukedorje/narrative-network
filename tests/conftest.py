@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for Narrative Network tests."""
+"""Shared pytest fixtures for Bittensor Knowledge Network tests."""
 import pytest
 
 from subnet.harness import (

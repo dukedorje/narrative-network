@@ -1,5 +1,5 @@
 /**
- * Client for the Narrative Network gateway graph browsing endpoints.
+ * Client for the BKN gateway graph browsing endpoints.
  * Replaces the Bonfires.ai external API with the subnet's own knowledge graph.
  */
 

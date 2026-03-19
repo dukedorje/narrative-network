@@ -1,6 +1,6 @@
 # Incentive Alignment
 
-Narrative Network
+Bittensor Knowledge Network (BKN)
 
 ---
 
@@ -8,7 +8,7 @@ Narrative Network
 
 How do you evaluate a knowledge mutation when you don't have ground truth for novel knowledge recombination?
 
-Standard reward signals assume a known correct answer. The Narrative Network operates in the space of novel synthesis — recombining existing knowledge chunks into new narrative passages. There is no oracle. You cannot score a mutation against the right answer because the right answer does not exist prior to the act of mutation.
+Standard reward signals assume a known correct answer. BKN operates in the space of novel synthesis — recombining existing knowledge chunks into new narrative passages. There is no oracle. You cannot score a mutation against the right answer because the right answer does not exist prior to the act of mutation.
 
 The solution is comparative attestation. Multiple miners produce competing mutations at each node. Validators rank them relative to attractors — centroid embeddings that define the semantic basin of each knowledge cluster — rather than against absolute truth. The best mutation wins not because it matches a ground truth but because it best serves the attractor basin, as judged by an independent panel of validators whose weights are aggregated via Yuma Consensus.
 

@@ -1,6 +1,6 @@
-# Synapse Protocol — Narrative Network
+# Synapse Protocol — Bittensor Knowledge Network
 
-**Subnet:** Narrative Network
+**Subnet:** Bittensor Knowledge Network (BKN)
 **Protocol version:** defined by `SPEC_VERSION` in `subnet_config`
 
 ---

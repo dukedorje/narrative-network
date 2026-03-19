@@ -1,6 +1,6 @@
 # Session Management
 
-This document describes the gateway layer and session lifecycle for the Narrative Network orchestrator.
+This document describes the gateway layer and session lifecycle for the BKN orchestrator.
 
 ---
 

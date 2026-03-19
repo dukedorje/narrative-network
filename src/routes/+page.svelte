@@ -31,7 +31,7 @@
 <div class="splash">
 	<section class="hero" in:fade={{ duration: 500 }}>
 		<div class="hero-badge">Bittensor Subnet 42</div>
-		<h1 class="hero-title">Narrative Network</h1>
+		<h1 class="hero-title">Bittensor Knowledge Network</h1>
 		<p class="hero-subtitle">Navigate a living knowledge graph. Miners compete to narrate your journey.</p>
 	</section>
 

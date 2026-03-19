@@ -117,7 +117,7 @@ Permits recalculated every epoch. Falling below thresholds loses permit but does
 
 ---
 
-## Recommended Configuration for Narrative Network
+## Recommended Configuration for Bittensor Knowledge Network
 
 Based on our architecture:
 

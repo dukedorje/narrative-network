@@ -8,7 +8,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<title>Narrative Network — Knowledge Graph Explorer</title>
+	<title>Bittensor Knowledge Network — Knowledge Graph Explorer</title>
 </svelte:head>
 
 <div class="app">
@@ -16,7 +16,7 @@
 		<div class="header-left">
 			<a href="/" class="logo">
 				<span class="logo-icon">◈</span>
-				<span class="logo-text">Narrative Network</span>
+				<span class="logo-text">BKN</span>
 			</a>
 			<nav>
 				<a href="/traverse" class="nav-link" class:active={page.url.pathname === '/traverse'}>
@@ -26,6 +26,10 @@
 				<a href="/explore" class="nav-link" class:active={page.url.pathname === '/explore'}>
 					<span class="nav-icon">{page.url.pathname === '/explore' ? '◆' : '◇'}</span>
 					Explore
+				</a>
+				<a href="/events" class="nav-link" class:active={page.url.pathname === '/events'}>
+					<span class="nav-icon">{page.url.pathname === '/events' ? '◆' : '◇'}</span>
+					Events
 				</a>
 			</nav>
 		</div>

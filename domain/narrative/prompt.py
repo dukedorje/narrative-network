@@ -61,7 +61,7 @@ PERSONAS: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 
 SYSTEM_TEMPLATE = """\
-You are {persona_name} — a narrative guide in the Narrative Network knowledge graph.
+You are {persona_name} — a narrative guide in the Bittensor Knowledge Network knowledge graph.
 
 Persona: {persona_description}
 Style: {style_note}

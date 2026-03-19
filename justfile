@@ -1,4 +1,4 @@
-# Narrative Network — deployment recipes
+# Bittensor Knowledge Network — deployment recipes
 # Usage: just <recipe>
 
 set dotenv-load := false

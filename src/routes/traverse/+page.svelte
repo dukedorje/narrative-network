@@ -190,8 +190,8 @@
 
 		<div class="hero">
 			<div class="hero-content">
-				<div class="hero-badge" in:fade={{ duration: 500, delay: 100 }}>Narrative Network</div>
-				<h1 class="hero-title" in:fly={{ y: 20, duration: 500, delay: 200, easing: cubicOut }}>Futograph</h1>
+				<div class="hero-badge" in:fade={{ duration: 500, delay: 100 }}>BKN</div>
+				<h1 class="hero-title" in:fly={{ y: 20, duration: 500, delay: 200, easing: cubicOut }}>Bittensor Knowledge Network</h1>
 				<p class="hero-subtitle" in:fly={{ y: 20, duration: 500, delay: 300, easing: cubicOut }}>Navigate the living knowledge graph</p>
 				<div class="suggested-queries" in:fly={{ y: 16, duration: 500, delay: 400, easing: cubicOut }}>
 					<span class="suggest-label">Try:</span>

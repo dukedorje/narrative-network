@@ -140,7 +140,7 @@ Everything is recorded as **attestations on EAS**, providing a transparent, veri
 - Agentic RAG
 - Cybernetic Agents
 
-## NLA Integration in Narrative Network
+## NLA Integration in Bittensor Knowledge Network
 
 The `evolution/nla_settlement.py` module integrates Natural Language Agreements (NLA) from [`arkhai-io/natural-language-agreements`](https://github.com/arkhai-io/natural-language-agreements) as the settlement layer for all governance bond operations.
 
@@ -169,4 +169,4 @@ AXON_NLA_ENDPOINT=https://...  # Override default Arkhai endpoint
 AXON_NLA_CHAIN=base            # EVM chain for Alkahest contracts (default: base)
 ```
 
-All NLA calls are non-blocking — failures log a warning and the Bittensor proposal flow continues. This ensures Narrative Network governance is never blocked by EVM infrastructure availability.
+All NLA calls are non-blocking — failures log a warning and the Bittensor proposal flow continues. This ensures BKN governance is never blocked by EVM infrastructure availability.

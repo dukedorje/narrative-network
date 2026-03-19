@@ -1,4 +1,4 @@
-"""Evolution package for Narrative Network subnet.
+"""Evolution package for Bittensor Knowledge Network subnet.
 
 Provides on-chain governance mechanisms:
 - proposal: NodeProposal creation, submission, and bond management

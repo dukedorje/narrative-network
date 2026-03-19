@@ -6,7 +6,7 @@ Reference document for rebuilding the knowledge graph browser with Threlte (Thre
 
 ## Overview
 
-The graph navigator is the main page of the Narrative Network web app. It lets users search a knowledge graph and visually explore entities and their relationships. Users search by natural language, see results as a force-directed graph, click nodes to expand their neighborhoods, and read details in a sidebar.
+The graph navigator is the main page of the BKN web app. It lets users search a knowledge graph and visually explore entities and their relationships. Users search by natural language, see results as a force-directed graph, click nodes to expand their neighborhoods, and read details in a sidebar.
 
 ---
 

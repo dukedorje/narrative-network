@@ -1,4 +1,4 @@
-"""EventBus — Redis pub/sub event bus for Narrative Network observability.
+"""EventBus — Redis pub/sub event bus for Bittensor Knowledge Network observability.
 
 Publishes structured JSON events to Redis channels. Falls back to
 in-memory asyncio.Queue when Redis is unavailable (single-process dev mode).
@@ -51,7 +51,7 @@ class Event:
 
 
 class EventBus:
-    """Redis pub/sub event bus for Narrative Network observability.
+    """Redis pub/sub event bus for Bittensor Knowledge Network observability.
 
     Falls back to in-memory asyncio.Queue when Redis is unavailable
     (single-process dev mode via `just gateway`).

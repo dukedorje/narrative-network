@@ -1,4 +1,4 @@
-"""FastAPI gateway for the Narrative Network traversal service."""
+"""FastAPI gateway for the Bittensor Knowledge Network traversal service."""
 
 from __future__ import annotations
 
@@ -221,7 +221,7 @@ def create_app(
 ) -> FastAPI:
     """Create and return the configured FastAPI application."""
 
-    app = FastAPI(title="Narrative Network Gateway", version="0.1.0")
+    app = FastAPI(title="Bittensor Knowledge Network Gateway", version="0.1.0")
 
     app.add_middleware(
         CORSMiddleware,
@@ -959,7 +959,7 @@ def create_dev_app() -> FastAPI:
     miner_pool = _LocalMinerPool(corpus_map, embedder, graph_store)
     narrator = _LocalNarrator()
 
-    app = FastAPI(title="Narrative Network Gateway (dev)", version="0.1.0-dev")
+    app = FastAPI(title="Bittensor Knowledge Network Gateway (dev)", version="0.1.0-dev")
 
     app.add_middleware(
         CORSMiddleware,

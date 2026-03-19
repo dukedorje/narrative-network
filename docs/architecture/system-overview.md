@@ -1,4 +1,4 @@
-# Narrative Network — System Architecture Overview
+# Bittensor Knowledge Network — System Architecture Overview
 
 **The network that thinks by being traversed.**
 
@@ -22,7 +22,7 @@
 
 ## 1. High-Level Architecture
 
-The Narrative Network is composed of six distinct layers. Traffic originates at the Gateway, passes through the Bittensor subnet synapse protocol to miners, is scored by validators, and the resulting attestations are written back to both the chain and the living graph store.
+BKN is composed of six distinct layers. Traffic originates at the Gateway, passes through the Bittensor subnet synapse protocol to miners, is scored by validators, and the resulting attestations are written back to both the chain and the living graph store.
 
 ```
                          ┌─────────────────────────────────────────────────────┐
@@ -153,7 +153,7 @@ The Gateway is the only internet-facing component. All inter-component communica
 
 ### 2.6 Subtensor Chain
 
-The canonical on-chain registry for the Narrative Network subnet. Validators read the metagraph to discover active miner UIDs, verify stake, and commit scored weights. Key on-chain objects:
+The canonical on-chain registry for the BKN subnet. Validators read the metagraph to discover active miner UIDs, verify stake, and commit scored weights. Key on-chain objects:
 
 - **UID registry** — maps miner hotkeys to node IDs and metadata CIDs
 - **Stake table** — TAO staked per UID; governs emission share

@@ -1,4 +1,4 @@
-"""Synapse protocol definitions for Narrative Network.
+"""Synapse protocol definitions for Bittensor Knowledge Network.
 
 This file defines the wire protocol. Two bt.Synapse subclasses are transmitted
 over Bittensor's axon/dendrite transport: KnowledgeQuery and NarrativeHop.

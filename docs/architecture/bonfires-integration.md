@@ -51,7 +51,7 @@ Both systems use semantic proximity and retrieval frequency as value signals. Bo
 
 These systems are **not the same kind of graph**, and the integration design depends on understanding this distinction clearly.
 
-| Property | Narrative Network (KùzuDB) | Bonfires (Neo4j/Graphiti) |
+| Property | BKN (KùzuDB) | Bonfires (Neo4j/Graphiti) |
 |----------|---------------------------|--------------------------|
 | Node semantics | Attractor basin (centroid embedding + persona + corpus) | Named entity (person, org, concept) |
 | Edge semantics | Weighted navigability (float + decay + traversal count) | Typed relationship (string label: "operates", "uses") |
@@ -59,7 +59,7 @@ These systems are **not the same kind of graph**, and the integration design dep
 | Evolution model | Reinforcement + decay (continuous, ecological) | Append-only extraction (episodic, geological) |
 | Aliveness metaphor | **Ecological** — birth, competition, death, decay. Unused paths atrophy. | **Geological** — sedimentation, accretion, preservation. Nothing is forgotten. |
 
-The Narrative Network graph at any moment is a *living organism*. The Bonfires projection of it is a *fossil record* — preserving what the organism forgets. The fossil record is valuable precisely because of this difference.
+The BKN graph at any moment is a *living organism*. The Bonfires projection of it is a *fossil record* — preserving what the organism forgets. The fossil record is valuable precisely because of this difference.
 
 The projection works **only because it is unidirectional**. If anyone tries to reason over the Bonfires projection as if it were the live graph (compute metrics, derive weights, make scoring decisions), the semantic mismatch will produce misleading results.
 
@@ -69,7 +69,7 @@ The projection works **only because it is unidirectional**. If anyone tries to r
 
 ### Model A: Bonfires as Seed Crystal
 
-Bonfires provides the **initial graph topology** that the Narrative Network bootstraps from. Before any miner registers, the network needs a starting set of knowledge domains, their relationships, and corpus content. A Bonfire's Neo4j graph of entities and relationships becomes the seed for our KùzuDB node/edge structure.
+Bonfires provides the **initial graph topology** that BKN bootstraps from. Before any miner registers, the network needs a starting set of knowledge domains, their relationships, and corpus content. A Bonfire's Neo4j graph of entities and relationships becomes the seed for our KùzuDB node/edge structure.
 
 **Flow:**
 ```
@@ -86,7 +86,7 @@ Bonfire graph (Neo4j)
 
 ### Model B: Bonfires as Community Memory Layer
 
-The Narrative Network generates attestations, traversal history, and topology evolution. This is valuable signal that communities want to query, visualize, and discuss. Bonfires excels at making knowledge conversationally accessible.
+BKN generates attestations, traversal history, and topology evolution. This is valuable signal that communities want to query, visualize, and discuss. Bonfires excels at making knowledge conversationally accessible.
 
 **Flow:**
 ```
@@ -430,7 +430,7 @@ This separation means the Bonfires graph structure reflects topology (which is r
 
 A kEngram maps naturally to a **validated traversal hop**:
 
-| kEngram field | Narrative Network equivalent |
+| kEngram field | BKN equivalent |
 |--------------|------------------------------|
 | Content | Winning passage text + knowledge synthesis |
 | Attribution | Winning miner UID + validator UIDs who scored it |
@@ -438,7 +438,7 @@ A kEngram maps naturally to a **validated traversal hop**:
 | Embedding | Passage embedding (from NarrativeHop response) |
 | Metadata | Groundedness/Coherence/Edge Utility scores, traversal count |
 
-This mapping means every scored hop in the Narrative Network can be expressed as a kEngram and written to Bonfires. Over time, the Bonfire accumulates the network's entire attestation history as queryable knowledge.
+This mapping means every scored hop in BKN can be expressed as a kEngram and written to Bonfires. Over time, the Bonfire accumulates the network's entire attestation history as queryable knowledge.
 
 ---
 

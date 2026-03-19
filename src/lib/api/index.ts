@@ -1,5 +1,5 @@
 /**
- * Narrative Network API — public barrel export
+ * BKN API — public barrel export
  *
  * This is the single import point for frontend devs:
  *

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "narrative-network"
+name = "bkn"
 version = "0.1.0"
-description = "Narrative Network — Living knowledge graph with comparative attestation"
+description = "Bittensor Knowledge Network — Living knowledge graph with comparative attestation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -40,9 +40,9 @@ dev = [
 ]
 
 [project.scripts]
-narrative-validator = "subnet.validator:main"
-narrative-miner = "domain.unified_miner:main"
-narrative-gateway = "orchestrator.gateway:main"
+bkn-validator = "subnet.validator:main"
+bkn-miner = "domain.unified_miner:main"
+bkn-gateway = "orchestrator.gateway:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["subnet", "domain", "orchestrator", "evolution"]

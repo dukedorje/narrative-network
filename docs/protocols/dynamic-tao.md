@@ -122,7 +122,7 @@ Current `tao_weight` = 0.18 (gradually shifting to make alpha dominant).
 
 ---
 
-## Implications for Narrative Network
+## Implications for Bittensor Knowledge Network
 
 ### The 41/41/18 Split is Protocol-Enforced
 

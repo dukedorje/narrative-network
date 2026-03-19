@@ -2,7 +2,7 @@
 
 ## Overview
 
-Model C is the current operational model for Narrative Network subnet 42. Miners own knowledge-domain nodes. A node's survival is determined entirely by quality — validators score miners on traversal relevance, narrative quality, topology importance, and corpus integrity, then prune underperforming nodes through a three-phase state machine.
+Model C is the current operational model for Bittensor Knowledge Network (BKN) subnet 42. Miners own knowledge-domain nodes. A node's survival is determined entirely by quality — validators score miners on traversal relevance, narrative quality, topology importance, and corpus integrity, then prune underperforming nodes through a three-phase state machine.
 
 There is no on-chain governance for node proposals or admission in Model C. That is deferred to future work (see [What Comes Later](#what-comes-later)). Instead, registration is a lightweight commit-reveal: a miner stakes TAO and publishes a `DomainManifest`, then commits the manifest CID on-chain via `subtensor.set_commitment()`. The validator reads the CID, loads the manifest from local store, and registers the node.
 

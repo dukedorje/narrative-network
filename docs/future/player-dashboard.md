@@ -1,6 +1,6 @@
 # Player Dashboard
 
-Narrative Network
+Bittensor Knowledge Network (BKN)
 
 ---
 

@@ -1,4 +1,4 @@
-# Narrative Network — Quick Reference
+# Bittensor Knowledge Network — Quick Reference
 
 ## What's Working (✅)
 

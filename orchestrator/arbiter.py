@@ -113,7 +113,7 @@ class TraversalArbiter:
             f"  - {c}: {node_descriptions.get(c, c)}" for c in candidates
         )
         return (
-            f"Traversal Hop Arbitration — Narrative Network\n\n"
+            f"Traversal Hop Arbitration — Bittensor Knowledge Network\n\n"
             f"Session: {session_id}\n"
             f"Player path: {path_str}\n"
             f"Selected hop: {source_node} → {dest_node}\n"
@@ -128,7 +128,7 @@ class TraversalArbiter:
             f"meaningful forward steps given the player's accumulated path.\n"
             f"3. Exclude candidates that create trivial cycles or diverge too far "
             f"from the thematic thread established by: {path_str}.\n\n"
-            f"Arbiter: Alkahest StringObligation + Narrative Network graph edge weights.\n"
+            f"Arbiter: Alkahest StringObligation + Bittensor Knowledge Network graph edge weights.\n"
             f"Chain: {self.chain}"
         )
 

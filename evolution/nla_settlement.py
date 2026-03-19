@@ -35,7 +35,7 @@ class NLAgreement:
 
     Attributes:
         agreement_text: Human-readable agreement text (natural language spec).
-        proposal_id: Narrative Network proposal ID this agreement covers.
+        proposal_id: Bittensor Knowledge Network proposal ID this agreement covers.
         escrow_uid: EAS attestation UID of the on-chain escrow (post-registration).
         fulfillment_uid: EAS attestation UID after final settlement.
         status: "draft" | "registered" | "returned" | "burned"
@@ -64,7 +64,7 @@ class SettlementResult:
 class NLASettlementClient:
     """Client for the Arkhai Natural Language Agreements API.
 
-    Bridges Narrative Network governance events (vote outcomes, integration
+    Bridges Bittensor Knowledge Network governance events (vote outcomes, integration
     milestones, node collapses) to on-chain settlement via Alkahest escrows.
 
     Agreement text is expressed in natural language; the Arkhai NLA service
@@ -127,7 +127,7 @@ class NLASettlementClient:
         to Alkahest BaseEscrowObligation + stake-weighted VotingArbiter.
         """
         text = (
-            f"Proposal Bond Agreement — Narrative Network\n\n"
+            f"Proposal Bond Agreement — Bittensor Knowledge Network\n\n"
             f"Proposer: {proposer_hotkey}\n"
             f"Proposal ID: {proposal_id}\n"
             f"Action: {proposal_type} node '{node_id}'\n"
@@ -141,7 +141,7 @@ class NLASettlementClient:
             f"the bond is burned to the subnet treasury.\n"
             f"- If the proposal is not finalised by block {voting_deadline_block}, "
             f"the bond is automatically returned to the proposer.\n"
-            f"Arbiter: Stake-weighted Yuma Consensus on Bittensor the Narrative Network subnet."
+            f"Arbiter: Stake-weighted Yuma Consensus on Bittensor Knowledge Network subnet."
         )
         return NLAgreement(
             agreement_text=text,
@@ -164,7 +164,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for bond return on successful node integration."""
         text = (
-            f"Node Integration Bond Return — Narrative Network\n\n"
+            f"Node Integration Bond Return — Bittensor Knowledge Network\n\n"
             f"Node: {node_id}\n"
             f"Proposal: {proposal_id}\n"
             f"Owner: {proposer_hotkey}\n\n"
@@ -196,7 +196,7 @@ class NLASettlementClient:
     ) -> NLAgreement:
         """Build NLA for slash-on-collapse settlement."""
         text = (
-            f"Node Collapse Penalty Agreement — Narrative Network\n\n"
+            f"Node Collapse Penalty Agreement — Bittensor Knowledge Network\n\n"
             f"Node: {node_id}\n"
             f"Owner: {proposer_hotkey}\n"
             f"Epoch: {epoch}\n"

@@ -1,4 +1,4 @@
-# Narrative Network — Foundational Vision
+# Bittensor Knowledge Network — Foundational Vision
 
 **The network that thinks by being traversed.**
 
@@ -6,7 +6,7 @@
 
 ## The Premise
 
-Knowledge is not a warehouse. It is a living system — one that grows, forgets, dreams, and evolves through the paths taken through it. The Narrative Network is a substrate for that living system: a knowledge graph where every traversal is a simulation step, every path reinforcement is collective memory forming, and every decay is collective forgetting.
+Knowledge is not a warehouse. It is a living system — one that grows, forgets, dreams, and evolves through the paths taken through it. The Bittensor Knowledge Network (BKN) is a substrate for that living system: a knowledge graph where every traversal is a simulation step, every path reinforcement is collective memory forming, and every decay is collective forgetting.
 
 The network doesn't store knowledge. It *simulates* knowledge — generating new configurations of meaning as entities move through it.
 

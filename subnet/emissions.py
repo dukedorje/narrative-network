@@ -1,4 +1,4 @@
-"""Emission calculation for Narrative Network.
+"""Emission calculation for Bittensor Knowledge Network.
 
 Three pools map miner performance to TAO emission weights:
   - TraversalPool  (40%): rewards high-traffic, low-latency nodes
